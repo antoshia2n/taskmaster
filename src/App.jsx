@@ -12,7 +12,7 @@ import {
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
 const LIGHT = {
-  bg:"#F6F4EF", bgCard:"#FFFFFF",
+  bg:"#F6F4EF", bgCard:"#5e1d1d",
   bgSidebar:"#1B2337", bgSidebarHov:"#243050", bgSidebarAct:"#2E3D68",
   text:"#1A1D27", textSec:"#64748B", textMuted:"#94A3B8",
   border:"#E5E0D8", borderLight:"#EDE9E2",
@@ -261,7 +261,7 @@ export default function App() {
     const a=tasks.filter(t=>!t.archived);
     if(view==="today")   return a.filter(t=>!t.completed&&t.deadline&&t.deadline<=today());
     if(view==="tomorrow")return a.filter(t=>t.deadline===tomorrow());
-    if(view==="week")    return a.filter(t=>t.deadline>=today()&&t.deadline<=weekEnd());
+    if(view==="week")    return a.filter(t=>!t.completed&&t.deadline>=today()&&t.deadline<=weekEnd());
     return a; // "all" — include completed, TaskView filters by showDone
   },[tasks,view]);
 
@@ -269,7 +269,14 @@ export default function App() {
 
   const scale=SCALES[appSettings?.uiScale||"medium"]||1;
   const themePref=appSettings?.theme||"auto";
-  const sysDark=typeof window!=="undefined"&&window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  const [sysDark,setSysDark]=useState(()=>typeof window!=="undefined"&&!!window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+  useEffect(()=>{
+    const mq=window.matchMedia?.("(prefers-color-scheme: dark)");
+    if(!mq)return;
+    const handler=(e)=>setSysDark(e.matches);
+    mq.addEventListener("change",handler);
+    return()=>mq.removeEventListener("change",handler);
+  },[]);
   const isDark=themePref==="dark"||(themePref==="auto"&&sysDark);
   T = isDark ? DARK : LIGHT;
 
@@ -360,7 +367,7 @@ export default function App() {
 
       {editTask!==null&&(
         <TaskModal task={editTask==="new"?null:editTask} projects={projects} groups={groups}
-          onSave={t=>{editTask==="new"?setTasks(ts=>[...ts,{...t,id:uid(),order:ts.length,completed:false,archived:false}]):setTasks(ts=>ts.map(x=>x.id===t.id?t:x));setEditTask(null);}}
+          onSave={t=>{!editTask?.id?setTasks(ts=>[...ts,{...t,id:uid(),order:ts.length,completed:false,archived:false}]):setTasks(ts=>ts.map(x=>x.id===t.id?t:x));setEditTask(null);}}
           onClose={()=>setEditTask(null)}/>
       )}
       {editProj!==null&&(
@@ -562,20 +569,29 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
   const handleTaskDrop=(e,id)=>{e.preventDefault();setDragOverGroup(null);setDragOverTaskId(null);
     if(!dragTask)return;
     setTasks(ts=>{
-      // If dropping on a group header (id is groupId), just change group
-      // If dropping on a task (id is taskId), reorder
       const isTask=ts.some(t=>t.id===id);
+      // Drop on group header → just move to that group
       if(!isTask) return ts.map(t=>t.id===dragTask.id?{...t,groupId:id}:t);
       const target=ts.find(t=>t.id===id);
       if(!target||target.id===dragTask.id)return ts;
-      // Move dragTask to same group as target, insert before target
+      // Drop on task → reorder within target's group
       const gid=target.groupId;
-      const inGroup=ts.filter(t=>t.groupId===gid&&t.id!==dragTask.id).sort((a,b)=>a.order-b.order);
-      const ti=inGroup.findIndex(t=>t.id===id);
-      inGroup.splice(ti,0,{...dragTask,groupId:gid});
-      const reordered=inGroup.map((t,i)=>({...t,order:i}));
-      const others=ts.filter(t=>t.groupId!==gid||t.id===dragTask.id? t.groupId!==gid:false);
-      return ts.map(t=>{const r=reordered.find(x=>x.id===t.id);return r||t;}).map(t=>t.id===dragTask.id?{...t,groupId:gid}:t);
+      // Build ordered list of that group excluding the dragged task
+      const inGroup=ts
+        .filter(t=>t.groupId===gid&&t.id!==dragTask.id)
+        .sort((a,b)=>a.order-b.order);
+      // Insert dragged task before target
+      const insertAt=inGroup.findIndex(t=>t.id===id);
+      inGroup.splice(insertAt,0,dragTask);
+      // Assign fresh order values
+      const orderMap={};
+      inGroup.forEach((t,i)=>{orderMap[t.id]=i;});
+      // Apply: update groupId and order for all affected tasks
+      return ts.map(t=>{
+        if(t.id===dragTask.id) return{...t,groupId:gid,order:orderMap[t.id]??t.order};
+        if(orderMap[t.id]!==undefined) return{...t,order:orderMap[t.id]};
+        return t;
+      });
     });
     setDragTask(null);
   };
@@ -1171,7 +1187,7 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
 // ── Project Detail ────────────────────────────────────────────────────────────
 function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEditTask,onEditProj,onOpenDetail,doConfirm}){
   if(!project)return null;
-  const pt=tasks.filter(t=>t.projectId===project.id);
+  const pt=tasks.filter(t=>{const ids=[];const collect=p=>{ids.push(p.id);projects.filter(c=>c.parentId===p.id).forEach(collect);};collect(project);return ids.includes(t.projectId);});
   const done=pt.filter(t=>t.completed).length;
   const prog=pt.length?Math.round(done/pt.length*100):0;
   const pi=PRIO[project.priority]||PRIO.medium,si=STATUS[project.status]||STATUS.todo;
