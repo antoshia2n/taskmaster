@@ -147,6 +147,80 @@ class SB{
   async test(){const r=await fetch(`${this.url}/rest/v1/app_data?limit=1`,{headers:this.h()});return r.ok;}
 }
 
+// ── Pointer Drag System ───────────────────────────────────────────────────────
+const dragState = {
+  active:false, startX:0, startY:0,
+  data:null, ghost:null, onDrop:null, sourceEl:null, lastTarget:null,
+};
+
+function startPointerDrag(e, data, onDrop) {
+  if(!e)return;
+  const el = e.currentTarget?.closest?.(".tr,.pg-card") || e.currentTarget || e.target;
+  if(!el)return;
+  const rect = el.getBoundingClientRect();
+  const cx = e.clientX ?? 0;
+  const cy = e.clientY ?? 0;
+
+  // ゴースト要素
+  const ghost = el.cloneNode(true);
+  ghost.style.cssText = [
+    "position:fixed",`left:${rect.left}px`,`top:${rect.top}px`,
+    `width:${rect.width}px`,"opacity:0.88","pointer-events:none",
+    "z-index:9999","border-radius:12px",
+    "box-shadow:0 16px 48px rgba(0,0,0,.28)",
+    "transform:scale(1.04) rotate(0.8deg)",
+  ].join(";");
+  document.body.appendChild(ghost);
+
+  el.style.opacity = "0.28";
+  Object.assign(dragState,{
+    active:true, startX:cx-rect.left, startY:cy-rect.top,
+    data, ghost, onDrop, sourceEl:el, lastTarget:null,
+  });
+  if(navigator.vibrate) navigator.vibrate(28);
+}
+
+function _pdMove(e){
+  if(!dragState.active)return;
+  const cx=e.clientX, cy=e.clientY;
+  if(dragState.ghost){
+    dragState.ghost.style.left=(cx-dragState.startX)+"px";
+    dragState.ghost.style.top=(cy-dragState.startY)+"px";
+  }
+  dragState.ghost&&(dragState.ghost.style.display="none");
+  const below=document.elementFromPoint(cx,cy);
+  dragState.ghost&&(dragState.ghost.style.display="");
+  const target=below?.closest("[data-drop-id]");
+  if(dragState.lastTarget&&dragState.lastTarget!==target)
+    dragState.lastTarget.classList.remove("drag-over");
+  if(target){target.classList.add("drag-over");dragState.lastTarget=target;}
+}
+
+function _pdEnd(e){
+  if(!dragState.active)return;
+  dragState.active=false;
+  dragState.ghost?.remove(); dragState.ghost=null;
+  if(dragState.sourceEl) dragState.sourceEl.style.opacity="";
+  dragState.lastTarget?.classList.remove("drag-over");
+  document.querySelectorAll(".drag-over").forEach(el=>el.classList.remove("drag-over"));
+  const cx=e.clientX, cy=e.clientY;
+  const below=document.elementFromPoint(cx,cy);
+  const target=below?.closest("[data-drop-id]");
+  const dropId=target?.dataset.dropId;
+  if(dropId&&dragState.data){
+    dragState.onDrop?.(dragState.data,dropId);
+    if(navigator.vibrate)navigator.vibrate(14);
+  }
+  dragState.data=null; dragState.onDrop=null; dragState.sourceEl=null;
+}
+
+if(typeof window!=="undefined"){
+  window.addEventListener("pointermove",_pdMove,{passive:true});
+  window.addEventListener("pointerup",_pdEnd);
+  window.addEventListener("pointercancel",_pdEnd);
+}
+
+
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const [tasks,    setTasksR]    = useState(DEF_TASKS);
@@ -185,6 +259,8 @@ export default function App() {
     const client=new SB(url,key);
     try{
       if(!await client.test()){setSbStatus("error");return;}
+      // 接続成功時に確実に保存（再起動後の自動再接続のため）
+      try{localStorage.setItem("tm_sbcfg",JSON.stringify({url,key}));}catch(e){}
       sbRef.current=client;
       const rows=await client.get("app_data");
       const rem={};rows.forEach(r=>{rem[r.key]=r.value;});
@@ -331,6 +407,13 @@ export default function App() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Epilogue:wght@400;500;600;700;800&family=Fraunces:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         *{box-sizing:border-box;margin:0;padding:0;}
+        *{-webkit-tap-highlight-color:transparent;}
+        button,a,[draggable]{touch-action:manipulation;}
+        .menu-item:hover,.menu-item:active{background:var(--bg-hover) !important;}
+        .lhbtn:active{opacity:.7;}
+        button:active{opacity:.8;}
+        input,textarea,select{font-size:16px !important;} /* iOSズーム防止 */
+        .scroll-area{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;}
         ::-webkit-scrollbar{width:4px;height:4px;}
         ::-webkit-scrollbar-thumb{background:${T.border};border-radius:2px;}
         input,textarea,select{font-family:inherit;}
@@ -347,14 +430,21 @@ export default function App() {
         @keyframes fi{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         .fi{animation:fi .2s ease;}
         @keyframes spin{to{transform:rotate(360deg)}}
+        .drag-over{outline:2.5px solid var(--drag-accent,#6BAED4)!important;outline-offset:2px;background:rgba(107,174,212,.06)!important;}
+        [data-drop-id]{transition:outline .1s;}
         @media(max-width:768px){
   .sb{display:none!important;}
   .mobile-tabs{display:flex!important;}
-  .main-pad{padding:16px 14px!important;}
-  .tr{padding:9px 10px!important;}
-  .modal .fi{width:96%!important;max-height:90vh;overflow-y:auto;}
+  .main-pad{padding:12px 12px!important;}
+  .tr{padding:11px 12px!important;min-height:52px;}
+  .modal .fi{width:96%!important;max-height:92vh;overflow-y:auto;padding:20px!important;}
   .pomobar{padding:6px 14px!important;}
   .pomobar .pomobar-title{display:none!important;}
+  .drop-target.touch-over{outline:2px solid var(--blue)!important;}
+  /* Larger touch targets for small buttons */
+  .lhbtn{min-height:36px;min-width:36px;}
+  /* iOS safe areas */
+  .mobile-tabs{padding-bottom:max(8px,env(safe-area-inset-bottom))!important;}
 }
 @media(min-width:769px){
   .mobile-tabs{display:none!important;}
@@ -401,7 +491,12 @@ export default function App() {
               <SettingsView pomo={pomo} setPomo={setPomo}
                 appSettings={appSettings} setAppSettings={setAppSettings}
                 sbCfg={sbCfg} setSbCfg={setSbCfg}
-                sbStatus={sbStatus} onConnect={(u,k)=>{setSbCfg({url:u,key:k});connectSB(u,k);}}/>
+                sbStatus={sbStatus} onConnect={(u,k)=>{
+              // localStorageに直接・即時書き込み（state batchを経由しない）
+              try{localStorage.setItem("tm_sbcfg",JSON.stringify({url:u,key:k}));}catch(e){}
+              setSbCfg({url:u,key:k});
+              connectSB(u,k);
+            }}/>
             )}
           </div>
         </div>
@@ -609,7 +704,35 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
     setTasks(ts=>ts.map(t=>t.groupId===id?{...t,groupId:null}:t));
   });
 
-  const handleTaskDS=(e,t)=>{setDragTask(t);e.dataTransfer.effectAllowed="move";};
+  // Pointer-based drag for tasks
+  const startTaskDrag=(task)=>{
+    setDragTask(task);
+    startPointerDrag(
+      window._pendingDragEvent,
+      task,
+      (draggedTask, dropId)=>{
+        // Replicate handleTaskDrop logic
+        setDragTask(null);
+        setTasks(ts=>{
+          const isTask=ts.some(t=>t.id===dropId);
+          if(!isTask) return ts.map(t=>t.id===draggedTask.id?{...t,groupId:dropId}:t);
+          const target=ts.find(t=>t.id===dropId);
+          if(!target||target.id===draggedTask.id)return ts;
+          const gid=target.groupId;
+          const inGroup=ts.filter(t=>t.groupId===gid&&t.id!==draggedTask.id).sort((a,b)=>a.order-b.order);
+          const insertAt=inGroup.findIndex(t=>t.id===dropId);
+          inGroup.splice(insertAt,0,draggedTask);
+          const orderMap={};inGroup.forEach((t,i)=>{orderMap[t.id]=i;});
+          return ts.map(t=>{
+            if(t.id===draggedTask.id) return{...t,groupId:gid,order:orderMap[t.id]??t.order};
+            if(orderMap[t.id]!==undefined) return{...t,order:orderMap[t.id]};
+            return t;
+          });
+        });
+      },
+      ()=>setDragTask(null)
+    );
+  };
   const handleTaskDO=(e,id)=>{if(!dragGroup){e.preventDefault();setDragOverGroup(id);}};
   const handleTaskDrop=(e,id)=>{e.preventDefault();setDragOverGroup(null);setDragOverTaskId(null);
     if(!dragTask)return;
@@ -640,7 +763,19 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
     });
     setDragTask(null);
   };
-  const handleGroupDS=(e,g)=>{e.stopPropagation();setDragGroup(g);e.dataTransfer.effectAllowed="move";};
+  const handleGroupDS_html5=(e,g)=>{e.stopPropagation();setDragGroup(g);e.dataTransfer.effectAllowed="move";};
+  const startGroupDrag=(group, pendingEvent)=>{
+    setDragGroup(group);
+    startPointerDrag(
+      pendingEvent,
+      {__type:"group",...group},
+      (draggedGrp, dropId)=>{
+        setDragGroup(null);
+        handleGroupDrop({preventDefault:()=>{}}, dropId);
+      },
+      ()=>setDragGroup(null)
+    );
+  };
   const handleGroupDO=(e,id)=>{if(dragGroup){e.preventDefault();e.stopPropagation();setDragOverGroupTarget(id);}};
   const handleGroupDrop=(e,targetId)=>{
     e.preventDefault();e.stopPropagation();
@@ -739,8 +874,8 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
       {view!=="week"&&sortedGroups.map(g=>(
         <TGroup key={g.id} group={g} tasks={byG[g.id]||[]} projects={projects}
           isDragOver={dragOverGroup===g.id} isGroupDragOver={dragOverGroupTarget===g.id}
-          onTaskDS={handleTaskDS} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
-          onGroupDS={handleGroupDS} onGroupDO={handleGroupDO} onGroupDrop={handleGroupDrop}
+          onTaskDS={(task)=>startTaskDrag(task)} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
+          onGroupDS={(g)=>{startGroupDrag(g,window._pendingDragEvent||{preventDefault:()=>{},currentTarget:document.activeElement});}} onGroupDO={handleGroupDO} onGroupDrop={handleGroupDrop}
           dragOverTaskId={dragOverTaskId} setDragOverTaskId={setDragOverTaskId}
           onToggle={id=>setTasks(ts=>{
             const t=ts.find(x=>x.id===id);if(!t)return ts;
@@ -763,7 +898,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
       {view!=="week"&&ung.length>0&&(
         <TGroup group={{id:null,title:"Ungrouped",color:T.textMuted}} tasks={ung} projects={projects}
           isDragOver={dragOverGroup===null} isGroupDragOver={false}
-          onTaskDS={handleTaskDS} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
+          onTaskDS={(task)=>startTaskDrag(task)} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
           onGroupDS={()=>{}} onGroupDO={()=>{}} onGroupDrop={()=>{}}
           dragOverTaskId={dragOverTaskId} setDragOverTaskId={setDragOverTaskId}
           onToggle={id=>setTasks(ts=>{
@@ -917,6 +1052,33 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
   const[exp,setExp]=useState(false);
   const[menuOpen,setMenuOpen]=useState(false);
   const menuRef=useRef(null);
+  const swipeStart=useRef(null);
+  const [swipeX,setSwipeX]=useState(0);
+  const [swipeAction,setSwipeAction]=useState(null); // "complete" | "snooze"
+  const SWIPE_THRESH=72;
+
+  const handleSwipeStart=(e)=>{
+    if(e.touches.length!==1)return;
+    swipeStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    setSwipeX(0);setSwipeAction(null);
+  };
+  const handleSwipeMove=(e)=>{
+    if(!swipeStart.current)return;
+    const dx=e.touches[0].clientX-swipeStart.current.x;
+    const dy=Math.abs(e.touches[0].clientY-swipeStart.current.y);
+    if(dy>20&&Math.abs(dx)<dy){swipeStart.current=null;setSwipeX(0);return;} // vertical scroll
+    if(Math.abs(dx)>8) e.stopPropagation();
+    const clamped=Math.max(-120,Math.min(120,dx));
+    setSwipeX(clamped);
+    setSwipeAction(clamped>SWIPE_THRESH?"complete":clamped<-SWIPE_THRESH?"snooze":null);
+  };
+  const handleSwipeEnd=()=>{
+    if(swipeAction==="complete"&&onToggle) onToggle(task.id);
+    else if(swipeAction==="snooze"&&onSnooze) onSnooze(task.id,1);
+    swipeStart.current=null;
+    setSwipeX(0);setSwipeAction(null);
+    if(navigator.vibrate&&swipeAction) navigator.vibrate(30);
+  };
   const p=PRIO[task.priority]||PRIO.medium,s=STATUS[task.status]||STATUS.todo;
   const proj=projects.find(x=>x.id===task.projectId);
   const overdue=isOverdue(task.deadline)&&!task.completed;
@@ -926,27 +1088,66 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
     if(!menuOpen)return;
     const handler=(e)=>{if(menuRef.current&&!menuRef.current.contains(e.target))setMenuOpen(false);};
     document.addEventListener("mousedown",handler);
-    return()=>document.removeEventListener("mousedown",handler);
+    document.addEventListener("touchstart",handler,{passive:true});
+    return()=>{document.removeEventListener("mousedown",handler);document.removeEventListener("touchstart",handler);};
   },[menuOpen]);
 
   return(
     <>
-      <div className="tr" draggable onDragStart={e=>onDS(e,task)}
+      {/* Swipe hint layer */}
+      {swipeX!==0&&(
+        <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",
+          justifyContent:swipeX>0?"flex-start":"flex-end",padding:"0 20px",
+          borderRadius:12,pointerEvents:"none",zIndex:0,
+          background:swipeAction==="complete"?`${T.mint}20`:swipeAction==="snooze"?`${T.amber}20`:"transparent"}}>
+          {swipeX>0
+            ? <span style={{fontSize:13,color:T.mint,fontWeight:700}}>✓ 完了</span>
+            : <span style={{fontSize:13,color:T.amber,fontWeight:700}}>明日 →</span>}
+        </div>
+      )}
+      <div className="tr" data-drop-id={task.id}
         onDragOver={onDragOver} onDragLeave={onDragLeave}
         onDrop={e=>{if(onDrop)onDrop(e,task.id);}}
-        style={{background:T.bgCard,border:`1.5px solid ${isDragOverThis?T.blue:T.border}`,borderRadius:12,
-          padding:"11px 14px",display:"flex",alignItems:"center",gap:10,
-          boxShadow:"0 1px 4px rgba(0,0,0,.04)",cursor:"grab",
-          opacity:task.completed?.5:1,transition:"box-shadow .15s,border-color .15s"}}>
+        onTouchStart={handleSwipeStart}
+        onTouchMove={handleSwipeMove}
+        onTouchEnd={handleSwipeEnd}
+        style={{
+          position:"relative",zIndex:1,
+          transform:`translateX(${swipeX}px)`,
+          transition:swipeX===0?"transform .2s ease":"none",
+          background:T.bgCard,
+          border:`1.5px solid ${isDragOverThis?T.blue:swipeAction==="complete"?T.mint:swipeAction==="snooze"?T.amber:T.border}`,
+          borderRadius:12,padding:"11px 10px 11px 0",
+          display:"flex",alignItems:"center",gap:8,
+          boxShadow:"0 1px 4px rgba(0,0,0,.04)",
+          opacity:task.completed?.5:1,
+          transition:swipeX===0?"box-shadow .15s,border-color .15s,transform .2s":"none",
+          userSelect:"none",
+        }}>
 
-        {/* Grip + Check */}
-        <div style={{display:"flex",alignItems:"center",gap:4,flexShrink:0}}>
-          <GripVertical size={11} color={T.textMuted} style={{cursor:"grab",opacity:.5}}/>
-          <button onClick={()=>onToggle(task.id)}
-            style={{background:"none",border:"none",padding:0,cursor:"pointer",display:"flex",color:task.completed?T.mint:T.textMuted}}>
-            {task.completed?<CheckCircle2 size={17} color={T.mint}/>:<Circle size={17}/>}
-          </button>
+        {/* Grip handle — pointer drag のみ（スワイプと干渉しない） */}
+        <div
+          onPointerDown={e=>{
+            e.stopPropagation();
+            window._pendingDragEvent=e;
+            onDS(task);
+          }}
+          style={{
+            display:"flex",alignItems:"center",justifyContent:"center",
+            width:36,height:"100%",minHeight:40,
+            flexShrink:0,cursor:"grab",touchAction:"none",
+            color:T.textMuted,opacity:.45,
+            paddingLeft:10,
+          }}>
+          <GripVertical size={16}/>
         </div>
+
+        {/* Check button */}
+        <button onClick={()=>onToggle(task.id)}
+          style={{background:"none",border:"none",padding:"6px 4px",cursor:"pointer",
+            display:"flex",flexShrink:0,touchAction:"manipulation"}}>
+          {task.completed?<CheckCircle2 size={20} color={T.mint}/>:<Circle size={20} color={T.textMuted}/>}
+        </button>
 
         {/* Subtask toggle */}
         {hs&&(
@@ -1013,13 +1214,13 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
                 zIndex:100,minWidth:130,overflow:"hidden"}}>
                 <button onClick={()=>{setMenuOpen(false);onEdit(task);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  className="menu-item">
                   <Edit2 size={13} color={T.blue}/> Edit
                 </button>
                 {task.deadline!==today()&&onMoveToday&&(
                   <button onClick={()=>{setMenuOpen(false);onMoveToday(task.id);}}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    className="menu-item">
                     <Zap size={13} color={T.amber}/> 今日に移動
                   </button>
                 )}
@@ -1030,19 +1231,19 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
                 ].map(({label,days})=>(
                   <button key={days} onClick={()=>{setMenuOpen(false);onSnooze(task.id,days);}}
                     style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    className="menu-item">
                     <Clock size={13} color={T.textMuted}/> {label}
                   </button>
                 ))}
                 <button onClick={()=>{setMenuOpen(false);onArc(task.id);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  className="menu-item">
                   <Archive size={13} color={T.amber}/> Archive
                 </button>
                 <div style={{height:1,background:T.borderLight}}/>
                 <button onClick={()=>{setMenuOpen(false);onDel(task.id);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.peach,fontSize:13,cursor:"pointer"}}
-                  onMouseEnter={e=>e.currentTarget.style.background=T.peachBg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                  className="menu-item">
                   <Trash2 size={13}/> Delete
                 </button>
               </div>
@@ -1814,6 +2015,8 @@ function ManualView(){
 // ── Settings ──────────────────────────────────────────────────────────────────
 function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sbStatus,onConnect}){
   const [pf,setPf]=useState(pomo),[sbf,setSbf]=useState(sbCfg),[testing,setTesting]=useState(false);
+  // sbCfg が外から更新されたとき（初期ロード後）フォームに反映
+  useEffect(()=>{if(sbCfg.url||sbCfg.key)setSbf(sbCfg);},[sbCfg.url,sbCfg.key]);
   const sp=(k,v)=>setPf(f=>({...f,[k]:v}));
   const inp={background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 13px",color:T.text,fontSize:14,width:"100%"};
   const lbl={fontSize:11,color:T.textMuted,marginBottom:5,display:"block",textTransform:"uppercase",letterSpacing:.5,fontWeight:600};
