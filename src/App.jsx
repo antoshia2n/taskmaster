@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
-const T = {
+const LIGHT = {
   bg:"#F6F4EF", bgCard:"#FFFFFF",
   bgSidebar:"#1B2337", bgSidebarHov:"#243050", bgSidebarAct:"#2E3D68",
   text:"#1A1D27", textSec:"#64748B", textMuted:"#94A3B8",
@@ -22,6 +22,19 @@ const T = {
   peach:"#D9805F",peachBg:"#FBF0EC",
   amber:"#C9A84C",amberBg:"#FBF5E6",
 };
+const DARK = {
+  bg:"#12151E", bgCard:"#1C2030",
+  bgSidebar:"#0E1118", bgSidebarHov:"#1A1F2E", bgSidebarAct:"#222940",
+  text:"#E8E6F0", textSec:"#8B96B0", textMuted:"#545E78",
+  border:"#2A3045", borderLight:"#222840",
+  blue:"#6BAED4", blueBg:"#1A2D3D",
+  lav:"#9B8EC8",  lavBg:"#22213A",
+  mint:"#6DB89A", mintBg:"#182E26",
+  peach:"#D9805F",peachBg:"#2D1F18",
+  amber:"#C9A84C",amberBg:"#2D2614",
+};
+// T is set at render time in App; components receive it via prop or use the global
+let T = LIGHT;
 
 // ── Scale ────────────────────────────────────────────────────────────────────
 const SCALES = { large:1.18, medium:1, small:0.84 };
@@ -44,6 +57,29 @@ const isOverdue = (dl) => dl && dl < today();
 const normLink = (l) => !l ? {url:"",label:""} : typeof l === "string" ? {url:l, label:""} : (l.url !== undefined ? l : {url:"",label:""});
 const normLinks = (arr) => (arr||[]).map(normLink).filter(l=>l.url);
 
+
+
+const getWeekDays = () => {
+  const days=[];
+  for(let i=0;i<7;i++){
+    const d=new Date();d.setDate(d.getDate()+i);
+    days.push(d.toISOString().slice(0,10));
+  }
+  return days;
+};
+const nextRepeatDate = (dl, repeat) => {
+  if(!repeat||!dl)return null;
+  const d=new Date(dl+"T00:00:00");
+  if(repeat==="daily"){d.setDate(d.getDate()+1);}
+  else if(repeat==="weekday"){
+    d.setDate(d.getDate()+1);
+    if(d.getDay()===0)d.setDate(d.getDate()+1);
+    if(d.getDay()===6)d.setDate(d.getDate()+2);
+  }
+  else if(repeat==="weekly"){d.setDate(d.getDate()+7);}
+  else if(repeat==="monthly"){d.setMonth(d.getMonth()+1);}
+  return d.toISOString().slice(0,10);
+};
 const PRIO = {
   high:  {label:"高",color:T.peach,bg:T.peachBg},
   medium:{label:"中",color:T.amber,bg:T.amberBg},
@@ -76,7 +112,7 @@ const DEF_PROJECTS=[
   {id:"p2",title:"フロントエンド実装",status:"inprogress",priority:"high",startDate:"2025-01-15",endDate:"2025-03-15",parentId:"p1",notes:"",links:[],color:T.lav,order:1,expanded:false},
 ];
 const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBeforeLong:4};
-const DEF_SETTINGS={uiScale:"medium"};
+const DEF_SETTINGS={uiScale:"medium",theme:"auto"};
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 async function localLoad(key,fb){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fb;}catch(e){return fb;}}
@@ -164,6 +200,9 @@ export default function App() {
       setTasksR(t.map(x=>({...x,links:normLinks(x.links)}))); 
       setProjectsR(p.map(x=>({...x,links:normLinks(x.links)})));
       setGroupsR(g);setPomoR(pm);setSbCfgR(sb);setAppSettingsR(st);
+      // Restore today's pomodoro count (reset if new day)
+      const ps=await localLoad("tm_pomo_session",{todayCount:0,date:today()});
+      if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount}));
       if(sb.url&&sb.key)await connectSB(sb.url,sb.key);
       setReady(true);
     })();
@@ -192,7 +231,9 @@ export default function App() {
           if(elapsed>=lim){
             beep(880,0.5);
             const ns=s.session+1,nm=s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work";
-            return{...s,elapsed:0,mode:nm,session:ns,todayCount:s.mode==="work"?s.todayCount+1:s.todayCount,startedAt:Date.now()};
+            const newCount=s.mode==="work"?s.todayCount+1:s.todayCount;
+            localSave("tm_pomo_session",{todayCount:newCount,date:today()});
+            return{...s,elapsed:0,mode:nm,session:ns,todayCount:newCount,startedAt:Date.now()};
           }
           return{...s,elapsed};
         });
@@ -207,6 +248,7 @@ export default function App() {
   const resetPom=()=>setPomS(s=>({...s,elapsed:0,active:false}));
 
   const [confirm, setConfirm]=useState(null);
+  const [searchQ,setSearchQ]=useState("");
   const [editTask,setEditTask]=useState(null);
   const [editProj,setEditProj]=useState(null);
   const doConfirm=(msg,fn)=>setConfirm({msg,fn});
@@ -222,6 +264,10 @@ export default function App() {
   const openProjectDetail=(pid)=>{setSelectedProjectId(pid);setView("project_detail");};
 
   const scale=SCALES[appSettings?.uiScale||"medium"]||1;
+  const themePref=appSettings?.theme||"auto";
+  const sysDark=typeof window!=="undefined"&&window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+  const isDark=themePref==="dark"||(themePref==="auto"&&sysDark);
+  T = isDark ? DARK : LIGHT;
 
   if(!ready)return(
     <div style={{background:T.bg,height:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -251,7 +297,16 @@ export default function App() {
         @keyframes fi{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
         .fi{animation:fi .2s ease;}
         @keyframes spin{to{transform:rotate(360deg)}}
-        @media(max-width:640px){.sb{width:54px!important;}.sb .nbl,.sb .logotxt,.sb .sbft{display:none!important;}}
+        @media(max-width:768px){
+  .sb{display:none!important;}
+  .mobile-tabs{display:flex!important;}
+  .main-pad{padding:16px 14px!important;}
+  .tr{padding:9px 10px!important;}
+  .modal .fi{width:96%!important;max-height:90vh;overflow-y:auto;}
+}
+@media(min-width:769px){
+  .mobile-tabs{display:none!important;}
+}
       `}</style>
 
       <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
@@ -260,12 +315,13 @@ export default function App() {
         <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onSkip={skipPom} onReset={resetPom}/>
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
-          <div style={{padding:"28px 32px",minHeight:"100%"}}>
+          <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
             {(["today","tomorrow","week","all"].includes(view))&&(
               <TaskView view={view} tasks={filteredTasks} allTasks={tasks.filter(t=>!t.archived)}
                 groups={groups} projects={projects}
                 setTasks={setTasks} setGroups={setGroups}
-                onEditTask={setEditTask} onStartPom={startPom} doConfirm={doConfirm}/>
+                onEditTask={setEditTask} onStartPom={startPom} doConfirm={doConfirm}
+                searchQ={searchQ} setSearchQ={setSearchQ}/>
             )}
             {view==="projects"&&(
               <ProjectView projects={projects} tasks={tasks.filter(t=>!t.archived)}
@@ -319,6 +375,38 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* Mobile bottom tab bar */}
+      <div className="mobile-tabs" style={{
+        position:"fixed",bottom:0,left:0,right:0,
+        background:T.bgSidebar,
+        borderTop:`1px solid rgba(255,255,255,.08)`,
+        display:"flex",
+        zIndex:150,
+        paddingBottom:"env(safe-area-inset-bottom,0px)"
+      }}>
+        {[
+          {id:"today",   icon:<Zap size={18}/>,      label:"Today"},
+          {id:"week",    icon:<Calendar size={18}/>,  label:"Week"},
+          {id:"projects",icon:<Folder size={18}/>,   label:"Projects"},
+          {id:"archive", icon:<Archive size={18}/>,  label:"Archive"},
+          {id:"settings",icon:<Settings size={18}/>, label:"Settings"},
+        ].map(item=>{
+          const active=view===item.id||(item.id==="projects"&&view==="project_detail");
+          return(
+            <button key={item.id} onClick={()=>{setView(item.id);setSelectedProjectId(null);}}
+              style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",
+                justifyContent:"center",gap:3,padding:"10px 4px",background:"none",border:"none",
+                color:active?"#FFFFFF":"rgba(255,255,255,.45)",cursor:"pointer",
+                borderTop:active?`2px solid ${T.blue}`:"2px solid transparent",
+                transition:"color .15s"}}>
+              {item.icon}
+              <span style={{fontSize:9,fontWeight:active?700:400,letterSpacing:.3}}>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+      {/* Bottom padding for mobile tab bar */}
+      <style>{`@media(max-width:768px){.main-pad{padding-bottom:72px!important;}}`}</style>
     </div>
   );
 }
@@ -429,9 +517,10 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
 }
 
 // ── Task View ─────────────────────────────────────────────────────────────────
-function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEditTask,onStartPom,doConfirm}){
+function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEditTask,onStartPom,doConfirm,searchQ,setSearchQ}){
   const [ntg,setNtg]=useState(null),[ntt,setNtt]=useState("");
   const [showDone,setShowDone]=useState(false);
+  const [dragOverTaskId,setDragOverTaskId]=useState(null);
   const [dragTask,setDragTask]=useState(null);
   const [dragOverGroup,setDragOverGroup]=useState(null);
   const [dragGroup,setDragGroup]=useState(null);
@@ -441,7 +530,8 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
   const ngComposing=useRef(false);
 
   const undone=tasks.filter(t=>!t.completed).length;
-  const visibleTasks=view==="all"&&!showDone?tasks.filter(t=>!t.completed):tasks;
+  const searchFiltered=searchQ.trim()?tasks.filter(t=>t.title.toLowerCase().includes(searchQ.toLowerCase())||(t.notes||"").toLowerCase().includes(searchQ.toLowerCase())):tasks;
+  const visibleTasks=view==="all"&&!showDone?searchFiltered.filter(t=>!t.completed):searchFiltered;
   const byG=groups.reduce((a,g)=>{a[g.id]=visibleTasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{});
   const ung=visibleTasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order);
   const sortedGroups=[...groups].sort((a,b)=>a.order-b.order);
@@ -465,7 +555,26 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
 
   const handleTaskDS=(e,t)=>{setDragTask(t);e.dataTransfer.effectAllowed="move";};
   const handleTaskDO=(e,id)=>{if(!dragGroup){e.preventDefault();setDragOverGroup(id);}};
-  const handleTaskDrop=(e,id)=>{e.preventDefault();if(dragTask)setTasks(ts=>ts.map(t=>t.id===dragTask.id?{...t,groupId:id}:t));setDragTask(null);setDragOverGroup(null);};
+  const handleTaskDrop=(e,id)=>{e.preventDefault();setDragOverGroup(null);setDragOverTaskId(null);
+    if(!dragTask)return;
+    setTasks(ts=>{
+      // If dropping on a group header (id is groupId), just change group
+      // If dropping on a task (id is taskId), reorder
+      const isTask=ts.some(t=>t.id===id);
+      if(!isTask) return ts.map(t=>t.id===dragTask.id?{...t,groupId:id}:t);
+      const target=ts.find(t=>t.id===id);
+      if(!target||target.id===dragTask.id)return ts;
+      // Move dragTask to same group as target, insert before target
+      const gid=target.groupId;
+      const inGroup=ts.filter(t=>t.groupId===gid&&t.id!==dragTask.id).sort((a,b)=>a.order-b.order);
+      const ti=inGroup.findIndex(t=>t.id===id);
+      inGroup.splice(ti,0,{...dragTask,groupId:gid});
+      const reordered=inGroup.map((t,i)=>({...t,order:i}));
+      const others=ts.filter(t=>t.groupId!==gid||t.id===dragTask.id? t.groupId!==gid:false);
+      return ts.map(t=>{const r=reordered.find(x=>x.id===t.id);return r||t;}).map(t=>t.id===dragTask.id?{...t,groupId:gid}:t);
+    });
+    setDragTask(null);
+  };
   const handleGroupDS=(e,g)=>{e.stopPropagation();setDragGroup(g);e.dataTransfer.effectAllowed="move";};
   const handleGroupDO=(e,id)=>{if(dragGroup){e.preventDefault();e.stopPropagation();setDragOverGroupTarget(id);}};
   const handleGroupDrop=(e,targetId)=>{
@@ -486,18 +595,28 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
 
   return(
     <div className="fi">
-      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
-        <div>
-          <div style={{display:"flex",alignItems:"baseline",gap:12}}>
-            <h1 style={{fontFamily:"'Fraunces',serif",fontSize:30,fontWeight:700,letterSpacing:-.5,color:T.text,lineHeight:1}}>{vl[view]||"Tasks"}</h1>
-            {undone>0&&<span style={{color:T.blue,fontWeight:700,background:T.blueBg,padding:"3px 10px",borderRadius:20,fontSize:12}}>{undone} remaining</span>}
+      <div style={{marginBottom:28}}>
+        <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:14}}>
+          <div>
+            <div style={{display:"flex",alignItems:"baseline",gap:12}}>
+              <h1 style={{fontFamily:"'Fraunces',serif",fontSize:30,fontWeight:700,letterSpacing:-.5,color:T.text,lineHeight:1}}>{vl[view]||"Tasks"}</h1>
+              {undone>0&&<span style={{color:T.blue,fontWeight:700,background:T.blueBg,padding:"3px 10px",borderRadius:20,fontSize:12}}>{undone} remaining</span>}
+            </div>
+            <div style={{fontSize:12,color:T.textMuted,marginTop:6}}>{new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
           </div>
-          <div style={{fontSize:12,color:T.textMuted,marginTop:6}}>{new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
+          <div style={{display:"flex",gap:8,marginTop:4}}>
+            {view==="all"&&<button onClick={()=>setShowDone(v=>!v)} className="lhbtn" style={{background:showDone?T.blueBg:T.bgCard,border:`1.5px solid ${showDone?T.blue:T.border}`,borderRadius:9,padding:"8px 14px",color:showDone?T.blue:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><CheckCircle2 size={13}/> {showDone?"完了を隠す":"完了を表示"}</button>}
+            <button onClick={()=>setShowAG(v=>!v)} className="lhbtn" style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"8px 14px",color:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Hash size={13}/> Add Group</button>
+            <button onClick={()=>onEditTask("new")} style={{background:T.blue,border:"none",borderRadius:9,padding:"8px 18px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6,boxShadow:`0 4px 14px ${T.blue}35`}}><Plus size={14}/> Add Task</button>
+          </div>
         </div>
-        <div style={{display:"flex",gap:8,marginTop:4}}>
-          {view==="all"&&<button onClick={()=>setShowDone(v=>!v)} className="lhbtn" style={{background:showDone?T.blueBg:T.bgCard,border:`1.5px solid ${showDone?T.blue:T.border}`,borderRadius:9,padding:"8px 14px",color:showDone?T.blue:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><CheckCircle2 size={13}/> {showDone?"完了を隠す":"完了を表示"}</button>}
-          <button onClick={()=>setShowAG(v=>!v)} className="lhbtn" style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"8px 14px",color:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Hash size={13}/> Add Group</button>
-          <button onClick={()=>onEditTask("new")} style={{background:T.blue,border:"none",borderRadius:9,padding:"8px 18px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6,boxShadow:`0 4px 14px ${T.blue}35`}}><Plus size={14}/> Add Task</button>
+        {/* Search bar */}
+        <div style={{position:"relative"}}>
+          <input value={searchQ} onChange={e=>setSearchQ(e.target.value)}
+            placeholder="タスクを検索..."
+            style={{width:"100%",background:T.bgCard,border:`1.5px solid ${searchQ?T.blue:T.border}`,borderRadius:9,
+              padding:"8px 32px 8px 12px",color:T.text,fontSize:13,outline:"none",transition:"border-color .15s"}}/>
+          {searchQ&&<button onClick={()=>setSearchQ("")} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:T.textMuted,cursor:"pointer",display:"flex",padding:2}}><X size={13}/></button>}
         </div>
       </div>
 
@@ -513,30 +632,88 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
         </div>
       )}
 
-      {sortedGroups.map(g=>(
+      {/* Week view: render by day instead of group */}
+      {view==="week"&&(()=>{
+        const days=getWeekDays();
+        return days.map(d=>{
+          const dayTasks=visibleTasks.filter(t=>t.deadline===d).sort((a,b)=>a.order-b.order);
+          if(dayTasks.length===0)return null;
+          const label=d===today()?"Today":d===tomorrow()?"Tomorrow":
+            new Date(d+"T00:00:00").toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
+          return(
+            <div key={d} style={{marginBottom:24}}>
+              <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:d===today()?T.blue:T.textSec,
+                  letterSpacing:.5,textTransform:"uppercase"}}>{label}</span>
+                <span style={{fontSize:11,color:T.textMuted,fontFamily:"JetBrains Mono,monospace"}}>{dayTasks.filter(t=>t.completed).length}/{dayTasks.length}</span>
+                <div style={{height:1,flex:1,background:T.borderLight}}/>
+              </div>
+              <div style={{display:"flex",flexDirection:"column",gap:6}}>
+                {dayTasks.map(t=>(
+                  <TRow key={t.id} task={t} projects={projects}
+                    onDS={handleTaskDS} onToggle={id=>setTasks(ts=>{
+                      const t2=ts.find(x=>x.id===id);if(!t2)return ts;
+                      const nowDone=!t2.completed;
+                      const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
+                      if(nowDone&&t2.repeat){const nd=nextRepeatDate(t2.deadline,t2.repeat);if(nd)return[...updated,{...t2,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];}
+                      return updated;
+                    })}
+                    onEdit={onEditTask}
+                    onDel={id=>doConfirm("このタスクを削除しますか？",()=>setTasks(ts=>ts.filter(t=>t.id!==id)))}
+                    onArc={id=>doConfirm("このタスクをアーカイブしますか？",()=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:true}:t)))}
+                    onPom={onStartPom}/>
+                ))}
+              </div>
+            </div>
+          );
+        });
+      })()}
+
+      {/* Normal group view for non-week views */}
+      {view!=="week"&&sortedGroups.map(g=>(
         <TGroup key={g.id} group={g} tasks={byG[g.id]||[]} projects={projects}
           isDragOver={dragOverGroup===g.id} isGroupDragOver={dragOverGroupTarget===g.id}
           onTaskDS={handleTaskDS} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
           onGroupDS={handleGroupDS} onGroupDO={handleGroupDO} onGroupDrop={handleGroupDrop}
-          onToggle={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,completed:!t.completed,status:!t.completed?"done":"todo"}:t))}
+          dragOverTaskId={dragOverTaskId} setDragOverTaskId={setDragOverTaskId}
+          onToggle={id=>setTasks(ts=>{
+            const t=ts.find(x=>x.id===id);if(!t)return ts;
+            const nowDone=!t.completed;
+            const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
+            if(nowDone&&t.repeat){
+              const nd=nextRepeatDate(t.deadline,t.repeat);
+              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];
+            }
+            return updated;
+          })}
           onEdit={onEditTask}
           onDel={id=>doConfirm("このタスクを削除しますか？",()=>setTasks(ts=>ts.filter(t=>t.id!==id)))}
           onArc={id=>doConfirm("このタスクをアーカイブしますか？",()=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:true}:t)))}
-          onPom={onStartPom} onDelG={delG} onEditG={id=>setEditGroupId(id)}
+          onPom={onStartPom} onMoveToday={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,deadline:today()}:t))} onDelG={delG} onEditG={id=>setEditGroupId(id)}
           ntg={ntg} setNtg={setNtg} ntt={ntt} setNtt={setNtt} addQ={addQ}
         />
       ))}
 
-      {ung.length>0&&(
+      {view!=="week"&&ung.length>0&&(
         <TGroup group={{id:null,title:"Ungrouped",color:T.textMuted}} tasks={ung} projects={projects}
           isDragOver={dragOverGroup===null} isGroupDragOver={false}
           onTaskDS={handleTaskDS} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
           onGroupDS={()=>{}} onGroupDO={()=>{}} onGroupDrop={()=>{}}
-          onToggle={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,completed:!t.completed,status:!t.completed?"done":"todo"}:t))}
+          dragOverTaskId={dragOverTaskId} setDragOverTaskId={setDragOverTaskId}
+          onToggle={id=>setTasks(ts=>{
+            const t=ts.find(x=>x.id===id);if(!t)return ts;
+            const nowDone=!t.completed;
+            const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
+            if(nowDone&&t.repeat){
+              const nd=nextRepeatDate(t.deadline,t.repeat);
+              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];
+            }
+            return updated;
+          })}
           onEdit={onEditTask}
           onDel={id=>doConfirm("このタスクを削除しますか？",()=>setTasks(ts=>ts.filter(t=>t.id!==id)))}
           onArc={id=>doConfirm("このタスクをアーカイブしますか？",()=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:true}:t)))}
-          onPom={onStartPom} onDelG={()=>{}} onEditG={()=>{}}
+          onPom={onStartPom} onMoveToday={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,deadline:today()}:t))} onDelG={()=>{}} onEditG={()=>{}}
           ntg={ntg} setNtg={setNtg} ntt={ntt} setNtt={setNtt} addQ={addQ}
         />
       )}
@@ -595,7 +772,8 @@ function GroupEditModal({group,onSave,onClose}){
 // ── Task Group ────────────────────────────────────────────────────────────────
 function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
   onTaskDS,onTaskDO,onTaskDrop,onGroupDS,onGroupDO,onGroupDrop,
-  onToggle,onEdit,onDel,onArc,onPom,onDelG,onEditG,ntg,setNtg,ntt,setNtt,addQ}){
+  dragOverTaskId,setDragOverTaskId,
+  onToggle,onEdit,onDel,onArc,onPom,onMoveToday,onDelG,onEditG,ntg,setNtg,ntt,setNtt,addQ}){
   const [coll,setColl]=useState(false);
   const done=tasks.filter(t=>t.completed).length;
   const addComposing=useRef(false);
@@ -632,7 +810,11 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
             <TRow key={t.id} task={t} projects={projects}
               onDS={onTaskDS} onToggle={onToggle} onEdit={onEdit}
               onDel={onDel} onArc={onArc} onPom={onPom}
-              isDragOver={isDragOver}/>
+              onMoveToday={onMoveToday}
+              onDrop={onTaskDrop}
+              isDragOverThis={dragOverTaskId===t.id}
+              onDragOver={e=>{e.preventDefault();setDragOverTaskId(t.id);}}
+              onDragLeave={()=>setDragOverTaskId(null)}/>
           ))}
           {tasks.length===0&&!ntg&&(
             <div style={{padding:"12px 16px",color:T.textMuted,fontSize:12,textAlign:"center",background:T.bgCard,borderRadius:10,border:`1.5px dashed ${T.borderLight}`}}>No tasks</div>
@@ -663,7 +845,7 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
 }
 
 // ── Task Row ──────────────────────────────────────────────────────────────────
-function TRow({task,projects,onDS,onToggle,onEdit,onDel,onArc,onPom}){
+function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMoveToday,isDragOverThis,onDragOver,onDragLeave}){
   const[exp,setExp]=useState(false);
   const[menuOpen,setMenuOpen]=useState(false);
   const menuRef=useRef(null);
@@ -682,7 +864,9 @@ function TRow({task,projects,onDS,onToggle,onEdit,onDel,onArc,onPom}){
   return(
     <>
       <div className="tr" draggable onDragStart={e=>onDS(e,task)}
-        style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:12,
+        onDragOver={onDragOver} onDragLeave={onDragLeave}
+        onDrop={e=>{if(onDrop)onDrop(e,task.id);}}
+        style={{background:T.bgCard,border:`1.5px solid ${isDragOverThis?T.blue:T.border}`,borderRadius:12,
           padding:"11px 14px",display:"flex",alignItems:"center",gap:10,
           boxShadow:"0 1px 4px rgba(0,0,0,.04)",cursor:"grab",
           opacity:task.completed?.5:1,transition:"box-shadow .15s,border-color .15s"}}>
@@ -764,6 +948,13 @@ function TRow({task,projects,onDS,onToggle,onEdit,onDel,onArc,onPom}){
                   onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
                   <Edit2 size={13} color={T.blue}/> Edit
                 </button>
+                {task.deadline!==today()&&onMoveToday&&(
+                  <button onClick={()=>{setMenuOpen(false);onMoveToday(task.id);}}
+                    style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
+                    onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
+                    <Zap size={13} color={T.amber}/> 今日に移動
+                  </button>
+                )}
                 <button onClick={()=>{setMenuOpen(false);onArc(task.id);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
                   onMouseEnter={e=>e.currentTarget.style.background=T.bg} onMouseLeave={e=>e.currentTarget.style.background="none"}>
@@ -1008,7 +1199,7 @@ function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEdi
             {period&&<span style={{fontSize:12,color:T.textMuted,fontFamily:"JetBrains Mono,monospace"}}>{period}</span>}
             <span style={{fontSize:12,fontWeight:700,color:prog===100?T.mint:T.blue,fontFamily:"JetBrains Mono,monospace"}}>{prog}% complete</span>
           </div>
-          {project.notes&&<p style={{fontSize:13,color:T.textSec,lineHeight:1.7,marginTop:8}}>{project.notes}</p>}
+          {project.notes&&<p style={{fontSize:13,color:T.textSec,lineHeight:1.7,marginTop:8,whiteSpace:"pre-wrap"}}>{project.notes}</p>}
           {project.links&&project.links.length>0&&(
             <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap"}}>
               {project.links.map((lk,i)=>{const l=normLink(lk);return(
@@ -1127,7 +1318,7 @@ function ProjectModal({project,projects,defaults,onSave,onClose}){
               {colors.map(c=><button key={c} onClick={()=>set("color",c)} style={{width:26,height:26,borderRadius:"50%",background:c,border:form.color===c?`3px solid ${T.text}`:"3px solid transparent",cursor:"pointer",transition:"transform .15s",transform:form.color===c?"scale(1.15)":"scale(1)"}}/>)}
             </div>
           </div>
-          <div style={{gridColumn:"1/-1"}}><label style={lbl}>Notes</label><textarea value={form.notes} onChange={e=>set("notes",e.target.value)} style={{...inp,height:80,resize:"vertical"}} placeholder="Description, goals..."/></div>
+          <div style={{gridColumn:"1/-1"}}><label style={lbl}>Notes</label><textarea value={form.notes} onChange={e=>set("notes",e.target.value)} style={{...inp,height:80,resize:"vertical",whiteSpace:"pre-wrap"}} placeholder="Description, goals..."/></div>
           <div style={{gridColumn:"1/-1"}}>
             <label style={lbl}>Reference Links</label>
             {(form.links||[]).map((lk,i)=>{const l=normLink(lk);return(
@@ -1347,6 +1538,27 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sb
               <div style={{fontSize:11,color:currentScale===k?T.blue:T.textMuted}}>{desc}</div>
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Theme */}
+      <div style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:14,padding:24,marginBottom:16,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
+          <div style={{width:34,height:34,background:T.amberBg,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><BookOpen size={16} color={T.amber}/></div>
+          <div><div style={{fontWeight:700,fontSize:14,color:T.text}}>テーマ</div><div style={{fontSize:12,color:T.textMuted}}>ライト / ダーク / OS自動追従</div></div>
+        </div>
+        <div style={{display:"flex",gap:10}}>
+          {[{k:"light",l:"☀️ Light"},{k:"auto",l:"💻 Auto"},{k:"dark",l:"🌙 Dark"}].map(({k,l})=>{
+            const cur=appSettings?.theme||"auto";
+            return(
+              <button key={k} onClick={()=>setAppSettings(s=>({...s,theme:k}))}
+                style={{flex:1,padding:"12px 10px",borderRadius:10,border:`2px solid ${cur===k?T.blue:T.border}`,
+                  background:cur===k?T.blueBg:"transparent",cursor:"pointer",transition:"all .15s",
+                  color:cur===k?T.blue:T.textSec,fontSize:13,fontWeight:cur===k?700:500}}>
+                {l}
+              </button>
+            );
+          })}
         </div>
       </div>
 
