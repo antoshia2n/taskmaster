@@ -214,6 +214,7 @@ function _pdEnd(e){
   dragState.data=null; dragState.onDrop=null; dragState.sourceEl=null;
 }
 
+let _pendingPE = null; // 最後のPointerDownイベントを保持（dragState設定用）
 if(typeof window!=="undefined"){
   window.addEventListener("pointermove",_pdMove,{passive:true});
   window.addEventListener("pointerup",_pdEnd);
@@ -708,70 +709,46 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
   const startTaskDrag=(task)=>{
     setDragTask(task);
     startPointerDrag(
-      window._pendingDragEvent,
+      _pendingPE,
       task,
-      (draggedTask, dropId)=>{
-        // Replicate handleTaskDrop logic
+      (draggedTask,dropId)=>{
+        // Use shared reorder logic
+        applyTaskDrop(draggedTask,dropId);
         setDragTask(null);
-        setTasks(ts=>{
-          const isTask=ts.some(t=>t.id===dropId);
-          if(!isTask) return ts.map(t=>t.id===draggedTask.id?{...t,groupId:dropId}:t);
-          const target=ts.find(t=>t.id===dropId);
-          if(!target||target.id===draggedTask.id)return ts;
-          const gid=target.groupId;
-          const inGroup=ts.filter(t=>t.groupId===gid&&t.id!==draggedTask.id).sort((a,b)=>a.order-b.order);
-          const insertAt=inGroup.findIndex(t=>t.id===dropId);
-          inGroup.splice(insertAt,0,draggedTask);
-          const orderMap={};inGroup.forEach((t,i)=>{orderMap[t.id]=i;});
-          return ts.map(t=>{
-            if(t.id===draggedTask.id) return{...t,groupId:gid,order:orderMap[t.id]??t.order};
-            if(orderMap[t.id]!==undefined) return{...t,order:orderMap[t.id]};
-            return t;
-          });
-        });
       },
       ()=>setDragTask(null)
     );
   };
-  const handleTaskDO=(e,id)=>{if(!dragGroup){e.preventDefault();setDragOverGroup(id);}};
-  const handleTaskDrop=(e,id)=>{e.preventDefault();setDragOverGroup(null);setDragOverTaskId(null);
-    if(!dragTask)return;
+  // Shared drop logic for both HTML5 and Pointer drag
+  const applyTaskDrop=(draggedTask,dropId)=>{
     setTasks(ts=>{
-      const isTask=ts.some(t=>t.id===id);
-      // Drop on group header → just move to that group
-      if(!isTask) return ts.map(t=>t.id===dragTask.id?{...t,groupId:id}:t);
-      const target=ts.find(t=>t.id===id);
-      if(!target||target.id===dragTask.id)return ts;
-      // Drop on task → reorder within target's group
+      const isTask=ts.some(t=>t.id===dropId);
+      if(!isTask) return ts.map(t=>t.id===draggedTask.id?{...t,groupId:dropId}:t);
+      const target=ts.find(t=>t.id===dropId);
+      if(!target||target.id===draggedTask.id)return ts;
       const gid=target.groupId;
-      // Build ordered list of that group excluding the dragged task
-      const inGroup=ts
-        .filter(t=>t.groupId===gid&&t.id!==dragTask.id)
-        .sort((a,b)=>a.order-b.order);
-      // Insert dragged task before target
-      const insertAt=inGroup.findIndex(t=>t.id===id);
-      inGroup.splice(insertAt,0,dragTask);
-      // Assign fresh order values
-      const orderMap={};
-      inGroup.forEach((t,i)=>{orderMap[t.id]=i;});
-      // Apply: update groupId and order for all affected tasks
+      const inGroup=ts.filter(t=>t.groupId===gid&&t.id!==draggedTask.id).sort((a,b)=>a.order-b.order);
+      const insertAt=inGroup.findIndex(t=>t.id===dropId);
+      inGroup.splice(insertAt,0,draggedTask);
+      const orderMap={};inGroup.forEach((t,i)=>{orderMap[t.id]=i;});
       return ts.map(t=>{
-        if(t.id===dragTask.id) return{...t,groupId:gid,order:orderMap[t.id]??t.order};
+        if(t.id===draggedTask.id) return{...t,groupId:gid,order:orderMap[t.id]??t.order};
         if(orderMap[t.id]!==undefined) return{...t,order:orderMap[t.id]};
         return t;
       });
     });
-    setDragTask(null);
+    setDragOverGroup(null);setDragOverTaskId(null);
   };
-  const handleGroupDS_html5=(e,g)=>{e.stopPropagation();setDragGroup(g);e.dataTransfer.effectAllowed="move";};
-  const startGroupDrag=(group, pendingEvent)=>{
+  const handleTaskDO=(e,id)=>{if(!dragGroup){e.preventDefault();setDragOverGroup(id);}};
+  const handleTaskDrop=(e,id)=>{e.preventDefault();if(!dragTask)return;applyTaskDrop(dragTask,id);setDragTask(null);};
+  const startGroupDrag=(group)=>{
     setDragGroup(group);
     startPointerDrag(
-      pendingEvent,
+      _pendingPE,
       {__type:"group",...group},
-      (draggedGrp, dropId)=>{
+      (draggedGrp,dropId)=>{
         setDragGroup(null);
-        handleGroupDrop({preventDefault:()=>{}}, dropId);
+        handleGroupDrop({preventDefault:()=>{}},dropId);
       },
       ()=>setDragGroup(null)
     );
@@ -851,7 +828,8 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
               <div style={{display:"flex",flexDirection:"column",gap:6}}>
                 {dayTasks.map(t=>(
                   <TRow key={t.id} task={t} projects={projects}
-                    onDS={handleTaskDS} onToggle={id=>setTasks(ts=>{
+                    onDS={(task)=>startTaskDrag(task)}
+                    onToggle={id=>setTasks(ts=>{
                       const t2=ts.find(x=>x.id===id);if(!t2)return ts;
                       const nowDone=!t2.completed;
                       const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
@@ -862,6 +840,8 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
                     onDel={id=>doConfirm("このタスクを削除しますか？",()=>setTasks(ts=>ts.filter(t=>t.id!==id)))}
                     onArc={id=>doConfirm("このタスクをアーカイブしますか？",()=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:true}:t)))}
                     onPom={onStartPom}
+                    onMoveToday={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,deadline:today()}:t))}
+                    onSnooze={(id,days)=>{setTasks(ts=>ts.map(t=>{if(t.id!==id)return t;const base=t.deadline&&t.deadline>=today()?t.deadline:today();const d=new Date(base+"T00:00:00");d.setDate(d.getDate()+days);return{...t,deadline:localDate(d)};}));}}
                     onToggleSub={(tid,sid)=>setTasks(ts=>ts.map(t=>t.id===tid?{...t,subtasks:t.subtasks.map(s=>s.id===sid?{...s,done:!s.done}:s)}:t))}/>
                 ))}
               </div>
@@ -875,7 +855,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
         <TGroup key={g.id} group={g} tasks={byG[g.id]||[]} projects={projects}
           isDragOver={dragOverGroup===g.id} isGroupDragOver={dragOverGroupTarget===g.id}
           onTaskDS={(task)=>startTaskDrag(task)} onTaskDO={handleTaskDO} onTaskDrop={handleTaskDrop}
-          onGroupDS={(g)=>{startGroupDrag(g,window._pendingDragEvent||{preventDefault:()=>{},currentTarget:document.activeElement});}} onGroupDO={handleGroupDO} onGroupDrop={handleGroupDrop}
+          onGroupDS={(g)=>{startGroupDrag(g);}} onGroupDO={handleGroupDO} onGroupDrop={handleGroupDrop}
           dragOverTaskId={dragOverTaskId} setDragOverTaskId={setDragOverTaskId}
           onToggle={id=>setTasks(ts=>{
             const t=ts.find(x=>x.id===id);if(!t)return ts;
@@ -985,9 +965,15 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
       onDrop={e=>{onTaskDrop(e,group.id);onGroupDrop(e,group.id);}}>
 
       {/* Group header */}
-      <div draggable={!!group.id} onDragStart={e=>onGroupDS(e,group)}
-        style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"4px 4px",cursor:group.id?"grab":"default"}}>
-        {group.id&&<GripVertical size={13} color={T.textMuted} style={{flexShrink:0,opacity:.5}}/>}
+      <div data-drop-id={group.id}
+        style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"4px 4px",cursor:"default"}}>
+        {group.id&&(
+          <div data-grip="true"
+            onPointerDown={e=>{e.stopPropagation();_pendingPE=e;onGroupDS(group);}}
+            style={{display:"flex",alignItems:"center",padding:"4px 2px",cursor:"grab",touchAction:"none",flexShrink:0}}>
+            <GripVertical size={13} color={T.textMuted} style={{opacity:.5}}/>
+          </div>
+        )}
         <button onClick={()=>setColl(c=>!c)} style={{background:"none",border:"none",color:T.textMuted,display:"flex",alignItems:"center",padding:2,borderRadius:4,cursor:"pointer"}}>
           {coll?<ChevronRight size={14}/>:<ChevronDown size={14}/>}
         </button>
@@ -1058,26 +1044,29 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
   const SWIPE_THRESH=72;
 
   const handleSwipeStart=(e)=>{
-    if(e.touches.length!==1)return;
-    swipeStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    // グリップからのpointerdownはドラッグ扱い（スワイプしない）
+    if(e.target?.closest?.("[data-grip]")) return;
+    // マウスはスワイプしない
+    if(e.pointerType==="mouse") return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    swipeStart.current={x:e.clientX,y:e.clientY,id:e.pointerId};
     setSwipeX(0);setSwipeAction(null);
   };
   const handleSwipeMove=(e)=>{
-    if(!swipeStart.current)return;
-    const dx=e.touches[0].clientX-swipeStart.current.x;
-    const dy=Math.abs(e.touches[0].clientY-swipeStart.current.y);
-    if(dy>20&&Math.abs(dx)<dy){swipeStart.current=null;setSwipeX(0);return;} // vertical scroll
-    if(Math.abs(dx)>8) e.stopPropagation();
+    if(!swipeStart.current||swipeStart.current.id!==e.pointerId)return;
+    const dx=e.clientX-swipeStart.current.x;
+    const dy=Math.abs(e.clientY-swipeStart.current.y);
+    if(dy>24&&Math.abs(dx)<dy){swipeStart.current=null;setSwipeX(0);return;}
     const clamped=Math.max(-120,Math.min(120,dx));
     setSwipeX(clamped);
     setSwipeAction(clamped>SWIPE_THRESH?"complete":clamped<-SWIPE_THRESH?"snooze":null);
   };
-  const handleSwipeEnd=()=>{
-    if(swipeAction==="complete"&&onToggle) onToggle(task.id);
-    else if(swipeAction==="snooze"&&onSnooze) onSnooze(task.id,1);
-    swipeStart.current=null;
-    setSwipeX(0);setSwipeAction(null);
-    if(navigator.vibrate&&swipeAction) navigator.vibrate(30);
+  const handleSwipeEnd=(e)=>{
+    if(!swipeStart.current||swipeStart.current.id!==e.pointerId)return;
+    const action=swipeAction;
+    swipeStart.current=null;setSwipeX(0);setSwipeAction(null);
+    if(action==="complete"&&onToggle){onToggle(task.id);if(navigator.vibrate)navigator.vibrate(30);}
+    else if(action==="snooze"&&onSnooze){onSnooze(task.id,1);if(navigator.vibrate)navigator.vibrate(30);}
   };
   const p=PRIO[task.priority]||PRIO.medium,s=STATUS[task.status]||STATUS.todo;
   const proj=projects.find(x=>x.id===task.projectId);
@@ -1108,9 +1097,10 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
       <div className="tr" data-drop-id={task.id}
         onDragOver={onDragOver} onDragLeave={onDragLeave}
         onDrop={e=>{if(onDrop)onDrop(e,task.id);}}
-        onTouchStart={handleSwipeStart}
-        onTouchMove={handleSwipeMove}
-        onTouchEnd={handleSwipeEnd}
+        onPointerDown={handleSwipeStart}
+        onPointerMove={handleSwipeMove}
+        onPointerUp={handleSwipeEnd}
+        onPointerCancel={handleSwipeEnd}
         style={{
           position:"relative",zIndex:1,
           transform:`translateX(${swipeX}px)`,
@@ -1127,9 +1117,10 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
 
         {/* Grip handle — pointer drag のみ（スワイプと干渉しない） */}
         <div
+          data-grip="true"
           onPointerDown={e=>{
             e.stopPropagation();
-            window._pendingDragEvent=e;
+            _pendingPE=e;
             onDS(task);
           }}
           style={{
@@ -1384,7 +1375,29 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
   });
 
   // Drag handlers for project cards
-  const handleProjDS=(e,proj)=>{setDragProj(proj);e.dataTransfer.effectAllowed="move";};
+  const handleProjDS=(e,proj)=>{
+    _pendingPE=e;
+    setDragProj(proj);
+    startPointerDrag(e,proj,(draggedProj,dropId)=>{
+      setDragProj(null);
+      setProjects(ps=>{
+        const isProj=ps.some(p=>p.id===dropId);
+        if(!isProj) return ps.map(p=>p.id===draggedProj.id?{...p,projectGroupId:dropId}:p);
+        const target=ps.find(p=>p.id===dropId);
+        if(!target||target.id===draggedProj.id)return ps;
+        const gid=target.projectGroupId;
+        const inGroup=ps.filter(p=>p.projectGroupId===gid&&!p.parentId&&p.id!==draggedProj.id).sort((a,b)=>a.order-b.order);
+        const insertAt=inGroup.findIndex(p=>p.id===dropId);
+        inGroup.splice(insertAt,0,draggedProj);
+        const orderMap={};inGroup.forEach((p,i)=>{orderMap[p.id]=i;});
+        return ps.map(p=>{
+          if(p.id===draggedProj.id) return{...p,projectGroupId:gid,order:orderMap[p.id]??p.order};
+          if(orderMap[p.id]!==undefined) return{...p,order:orderMap[p.id]};
+          return p;
+        });
+      });
+    },()=>setDragProj(null));
+  };
   const handleProjDrop=(e,targetId)=>{
     e.preventDefault();setDragOverProjId(null);
     if(!dragProj)return;
@@ -1411,12 +1424,15 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
     setDragProj(null);
   };
 
-  const sortedGroups=[...projectGroups].sort((a,b)=>a.order-b.order);
-  const byPG=sortedGroups.reduce((acc,g)=>{
-    acc[g.id]=projects.filter(p=>!p.parentId&&p.projectGroupId===g.id).sort((a,b)=>a.order-b.order);
-    return acc;
-  },{});
-  const ungrouped=projects.filter(p=>!p.parentId&&!projectGroups.find(g=>g.id===p.projectGroupId)).sort((a,b)=>a.order-b.order);
+  const {sortedGroups,byPG,ungrouped}=useMemo(()=>{
+    const sortedGroups=[...projectGroups].sort((a,b)=>a.order-b.order);
+    const byPG=sortedGroups.reduce((acc,g)=>{
+      acc[g.id]=projects.filter(p=>!p.parentId&&p.projectGroupId===g.id).sort((a,b)=>a.order-b.order);
+      return acc;
+    },{});
+    const ungrouped=projects.filter(p=>!p.parentId&&!projectGroups.find(g=>g.id===p.projectGroupId)).sort((a,b)=>a.order-b.order);
+    return{sortedGroups,byPG,ungrouped};
+  },[projects,projectGroups]);
 
   const PCard=({proj,depth=0})=>{
     const ch=projects.filter(p=>p.parentId===proj.id).sort((a,b)=>a.order-b.order);
@@ -1426,14 +1442,19 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
     const isDragOver=dragOverProjId===proj.id;
     return(
       <div style={{marginLeft:depth*20,marginBottom:8}}>
-        <div draggable={depth===0} onDragStart={depth===0?e=>handleProjDS(e,proj):undefined}
-          onDragOver={depth===0?e=>{e.preventDefault();setDragOverProjId(proj.id);}:undefined}
-          onDragLeave={depth===0?()=>setDragOverProjId(null):undefined}
+        <div data-drop-id={depth===0?proj.id:undefined}
+          onDragOver={depth===0?e=>e.preventDefault():undefined}
           onDrop={depth===0?e=>handleProjDrop(e,proj.id):undefined}
           style={{background:T.bgCard,border:`1.5px solid ${isDragOver?proj.color||T.blue:T.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.04)",transition:"border-color .15s"}}>
           <div style={{height:3,background:T.borderLight}}><div style={{height:"100%",width:`${prog}%`,background:proj.color||T.blue,transition:"width .5s ease"}}/></div>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px"}}>
-            {depth===0&&<GripVertical size={13} color={T.textMuted} style={{flexShrink:0,opacity:.4,cursor:"grab"}}/>}
+            {depth===0&&(
+              <div data-grip="true"
+                onPointerDown={e=>{e.stopPropagation();_pendingPE=e;handleProjDS(e,proj);}}
+                style={{display:"flex",alignItems:"center",padding:"4px 8px 4px 4px",cursor:"grab",touchAction:"none",flexShrink:0}}>
+                <GripVertical size={14} color={T.textMuted} style={{opacity:.45}}/>
+              </div>
+            )}
             <button onClick={()=>toggle(proj.id)} style={{background:"none",border:"none",color:T.textMuted,padding:0,cursor:"pointer",display:"flex"}}>{proj.expanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}</button>
             <div style={{width:10,height:10,borderRadius:"50%",background:proj.color||T.blue,flexShrink:0}}/>
             <div style={{flex:1,overflow:"hidden",cursor:"pointer"}} onClick={()=>onOpenDetail(proj.id)}>
@@ -1468,7 +1489,7 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
                 <button onClick={()=>onEditProj({parentId:proj.id})} className="lhbtn" style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 13px",color:T.textSec,fontSize:12,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><FolderOpen size={13}/> Sub-project</button>
                 <button onClick={()=>onOpenDetail(proj.id)} className="lhbtn" style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 13px",color:T.blue,fontSize:12,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><ChevronRight size={13}/> Detail</button>
                 {(proj.links||[]).slice(0,3).map((lk,i)=>{const l=normLink(lk);return(
-                  <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
+                  <a key={l.url||i} href={l.url} target="_blank" rel="noopener noreferrer"
                     style={{display:"flex",alignItems:"center",gap:5,background:T.mintBg,border:`1.5px solid ${T.mint}30`,borderRadius:8,padding:"7px 12px",color:T.mint,fontSize:12,fontWeight:600,textDecoration:"none"}}
                     title={l.url}>
                     <Link2 size={12}/>{l.label||"Link"}
@@ -1484,7 +1505,7 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
   };
 
   const PGroup=({group,projs})=>(
-    <div style={{marginBottom:28}}
+    <div data-drop-id={group.id} style={{marginBottom:28}}
       onDragOver={e=>{e.preventDefault();}}
       onDrop={e=>handleProjDrop(e,group.id)}>
       <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"0 2px"}}>
@@ -1578,7 +1599,7 @@ function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEdi
           {project.links&&project.links.length>0&&(
             <div style={{marginTop:10,display:"flex",gap:8,flexWrap:"wrap"}}>
               {project.links.map((lk,i)=>{const l=normLink(lk);return(
-                <a key={i} href={l.url} target="_blank" rel="noopener noreferrer"
+                <a key={l.url||i} href={l.url} target="_blank" rel="noopener noreferrer"
                   style={{display:"flex",alignItems:"center",gap:5,fontSize:12,color:T.mint,background:T.mintBg,padding:"5px 12px",borderRadius:8,textDecoration:"none",fontWeight:600}}>
                   <Link2 size={11}/>{l.label||"Link"}
                 </a>
@@ -1842,8 +1863,8 @@ function GanttView({projects,projectGroups}){
                 {dh.map((d,i)=>(
                   <div key={i} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight,height:"100%"}}/>
                 ))}
-                {dh.map((d,i)=>(
-                  <div key={`l${i}`} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:"50%",transform:"translateY(-50%)",fontSize:10,color:T.textMuted,fontFamily:"JetBrains Mono,monospace",whiteSpace:"nowrap",paddingLeft:4}}>{d.lb}</div>
+                {dh.map(d=>(
+                  <div key={d.lb} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:"50%",transform:"translateY(-50%)",fontSize:10,color:T.textMuted,fontFamily:"JetBrains Mono,monospace",whiteSpace:"nowrap",paddingLeft:4}}>{d.lb}</div>
                 ))}
               </div>
             </div>
@@ -1857,8 +1878,8 @@ function GanttView({projects,projectGroups}){
                     <span style={{fontSize:10,fontWeight:700,color:T.textSec,letterSpacing:.5,textTransform:"uppercase"}}>{row.group.title}</span>
                   </div>
                   <div style={{flex:1,background:T.bg,position:"relative"}}>
-                    {dh.map((d,i)=>(
-                      <div key={i} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight}}/>
+                    {dh.map(d=>(
+                      <div key={d.lb+"r"} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight}}/>
                     ))}
                   </div>
                 </div>
@@ -1878,8 +1899,8 @@ function GanttView({projects,projectGroups}){
                   </div>
                   <div style={{flex:1,position:"relative",minHeight:36}}>
                     {/* Grid lines */}
-                    {dh.map((d,i)=>(
-                      <div key={i} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight}}/>
+                    {dh.map(d=>(
+                      <div key={d.lb+"r"} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight}}/>
                     ))}
                     {/* Today line */}
                     <div style={{position:"absolute",left:`${(todayL/total)*100}%`,top:0,bottom:0,width:2,background:`${T.blue}40`,zIndex:2}}/>
