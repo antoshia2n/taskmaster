@@ -41,9 +41,13 @@ const SCALES = { large:1.18, medium:1, small:0.84 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const uid = () => Math.random().toString(36).slice(2, 9);
-const today    = () => new Date().toISOString().slice(0, 10);
-const tomorrow = () => { const d=new Date(); d.setDate(d.getDate()+1); return d.toISOString().slice(0,10); };
-const weekEnd  = () => { const d=new Date(); d.setDate(d.getDate()+(7-d.getDay())); return d.toISOString().slice(0,10); };
+const localDate = (d=new Date()) => {
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,"0"),day=String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+};
+const today    = () => localDate();
+const tomorrow = () => { const d=new Date(); d.setDate(d.getDate()+1); return localDate(d); };
+const weekEnd  = () => { const d=new Date(); d.setDate(d.getDate()+(7-d.getDay())); return localDate(d); };
 const fmtDate  = (s) => {
   if (!s) return "";
   return new Date(s+"T00:00:00").toLocaleDateString("ja-JP",{month:"short",day:"numeric",weekday:"short"});
@@ -63,7 +67,7 @@ const getWeekDays = () => {
   const days=[];
   for(let i=0;i<7;i++){
     const d=new Date();d.setDate(d.getDate()+i);
-    days.push(d.toISOString().slice(0,10));
+    days.push(localDate(d));
   }
   return days;
 };
@@ -78,7 +82,7 @@ const nextRepeatDate = (dl, repeat) => {
   }
   else if(repeat==="weekly"){d.setDate(d.getDate()+7);}
   else if(repeat==="monthly"){d.setMonth(d.getMonth()+1);}
-  return d.toISOString().slice(0,10);
+  return localDate(d);
 };
 const PRIO = {
   high:  {label:"高",color:T.peach,bg:T.peachBg},
