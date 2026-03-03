@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo, createContext, useContext } from "react";
 import {
   ChevronRight, ChevronDown, Plus, Trash2, Archive, Timer,
   Play, Pause, SkipForward, Settings, Calendar,
@@ -12,7 +12,7 @@ import {
 
 // ── Design Tokens ─────────────────────────────────────────────────────────────
 const LIGHT = {
-  bg:"#F6F4EF", bgCard:"#5e1d1d",
+  bg:"#F6F4EF", bgCard:"#FFFFFF",
   bgSidebar:"#1B2337", bgSidebarHov:"#243050", bgSidebarAct:"#2E3D68",
   text:"#1A1D27", textSec:"#64748B", textMuted:"#94A3B8",
   border:"#E5E0D8", borderLight:"#EDE9E2",
@@ -34,7 +34,7 @@ const DARK = {
   amber:"#C9A84C",amberBg:"#2D2614",
 };
 // T is set at render time in App; components receive it via prop or use the global
-let T = LIGHT;
+const ThemeContext = createContext(LIGHT);
 
 // ── Scale ────────────────────────────────────────────────────────────────────
 const SCALES = { large:1.18, medium:1, small:0.84 };
@@ -278,7 +278,7 @@ export default function App() {
     return()=>mq.removeEventListener("change",handler);
   },[]);
   const isDark=themePref==="dark"||(themePref==="auto"&&sysDark);
-  T = isDark ? DARK : LIGHT;
+  const T = isDark ? DARK : LIGHT;
 
   if(!ready)return(
     <div style={{background:T.bg,height:"100vh",display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -288,6 +288,7 @@ export default function App() {
   );
 
   return(
+    <ThemeContext.Provider value={T}>
     <div style={{display:"flex",height:"100vh",background:T.bg,color:T.text,fontFamily:"'Epilogue','DM Sans',system-ui,sans-serif",overflow:"hidden"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Epilogue:wght@400;500;600;700;800&family=Fraunces:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -419,11 +420,13 @@ export default function App() {
       {/* Bottom padding for mobile tab bar */}
       <style>{`@media(max-width:768px){.main-pad{padding-bottom:72px!important;}}`}</style>
     </div>
+    </ThemeContext.Provider>
   );
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({view,setView,tasks,sbStatus}){
+  const T=useContext(ThemeContext);
   const td=tasks.filter(t=>!t.completed&&t.deadline===today()).length;
   const ip=tasks.filter(t=>t.status==="inprogress").length;
   const nav=[
@@ -475,6 +478,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
 function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
+  const T=useContext(ThemeContext);
   const{active,mode,elapsed,session,todayCount,linkedId}=ps;
   const lim=(mode==="work"?pomo.workTime:mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
   const rem=lim-elapsed;
@@ -529,6 +533,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
 
 // ── Task View ─────────────────────────────────────────────────────────────────
 function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEditTask,onStartPom,doConfirm,searchQ,setSearchQ}){
+  const T=useContext(ThemeContext);
   const [ntg,setNtg]=useState(null),[ntt,setNtt]=useState("");
   const [showDone,setShowDone]=useState(false);
   const [dragOverTaskId,setDragOverTaskId]=useState(null);
@@ -758,6 +763,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
 
 // ── Group Edit Modal ──────────────────────────────────────────────────────────
 function GroupEditModal({group,onSave,onClose}){
+  const T=useContext(ThemeContext);
   const [form,setForm]=useState({...group});
   const inp={background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 13px",color:T.text,fontSize:13,width:"100%"};
   return(
@@ -794,6 +800,7 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
   onTaskDS,onTaskDO,onTaskDrop,onGroupDS,onGroupDO,onGroupDrop,
   dragOverTaskId,setDragOverTaskId,
   onToggle,onEdit,onDel,onArc,onPom,onMoveToday,onDelG,onEditG,ntg,setNtg,ntt,setNtt,addQ}){
+  const T=useContext(ThemeContext);
   const [coll,setColl]=useState(false);
   const done=tasks.filter(t=>t.completed).length;
   const addComposing=useRef(false);
@@ -866,6 +873,7 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
 
 // ── Task Row ──────────────────────────────────────────────────────────────────
 function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMoveToday,isDragOverThis,onDragOver,onDragLeave}){
+  const T=useContext(ThemeContext);
   const[exp,setExp]=useState(false);
   const[menuOpen,setMenuOpen]=useState(false);
   const menuRef=useRef(null);
@@ -1009,6 +1017,7 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
 
 // ── Task Modal ────────────────────────────────────────────────────────────────
 function TaskModal({task,projects,groups,onSave,onClose}){
+  const T=useContext(ThemeContext);
   const [form,setForm]=useState(task||{title:"",status:"todo",priority:"medium",deadline:today(),goalTime:"",repeat:"",projectId:"",groupId:groups[0]?.id||"",subtasks:[],notes:"",links:[]});
   const [ns,setNs]=useState(""),[nlUrl,setNlUrl]=useState(""),[nlLabel,setNlLabel]=useState("");
   const subC=useRef(false),linkC=useRef(false);
@@ -1099,6 +1108,7 @@ function TaskModal({task,projects,groups,onSave,onClose}){
 
 // ── Project View ──────────────────────────────────────────────────────────────
 function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,doConfirm,onOpenDetail}){
+  const T=useContext(ThemeContext);
   const roots=projects.filter(p=>!p.parentId).sort((a,b)=>a.order-b.order);
   const toggle=id=>setProjects(ps=>ps.map(p=>p.id===id?{...p,expanded:!p.expanded}:p));
   const delP=id=>doConfirm("このプロジェクトを削除しますか？",()=>{
@@ -1186,6 +1196,7 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
 
 // ── Project Detail ────────────────────────────────────────────────────────────
 function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEditTask,onEditProj,onOpenDetail,doConfirm}){
+  const T=useContext(ThemeContext);
   if(!project)return null;
   const pt=tasks.filter(t=>{const ids=[];const collect=p=>{ids.push(p.id);projects.filter(c=>c.parentId===p.id).forEach(collect);};collect(project);return ids.includes(t.projectId);});
   const done=pt.filter(t=>t.completed).length;
@@ -1302,6 +1313,7 @@ function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEdi
 
 // ── Project Modal ─────────────────────────────────────────────────────────────
 function ProjectModal({project,projects,defaults,onSave,onClose}){
+  const T=useContext(ThemeContext);
   const EMPTY={title:"",status:"todo",priority:"medium",startDate:"",endDate:"",parentId:null,notes:"",links:[],color:T.blue,expanded:true};
   const [form,setForm]=useState(project||{...EMPTY,...(defaults||{})});
   const[nlUrl,setNlUrl]=useState(""),[nlLabel,setNlLabel]=useState("");
@@ -1376,6 +1388,7 @@ function ProjectModal({project,projects,defaults,onSave,onClose}){
 
 // ── Archive View ──────────────────────────────────────────────────────────────
 function ArchiveView({tasks,projects,onUnarchive,onDel}){
+  const T=useContext(ThemeContext);
   return(
     <div>
       <div style={{marginBottom:24}}>
@@ -1431,6 +1444,7 @@ function ArchiveView({tasks,projects,onUnarchive,onDel}){
 
 // ── Gantt View (Projects only, with period bars) ───────────────────────────────
 function GanttView({projects}){
+  const T=useContext(ThemeContext);
   const now=new Date();
   // Compute visible range: earliest startDate - 7d to latest endDate + 14d
   const allDates=[...projects.map(p=>p.startDate).filter(Boolean),...projects.map(p=>p.endDate).filter(Boolean)];
@@ -1531,6 +1545,7 @@ function GanttView({projects}){
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sbStatus,onConnect}){
+  const T=useContext(ThemeContext);
   const [pf,setPf]=useState(pomo),[sbf,setSbf]=useState(sbCfg),[testing,setTesting]=useState(false);
   const sp=(k,v)=>setPf(f=>({...f,[k]:v}));
   const inp={background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 13px",color:T.text,fontSize:14,width:"100%"};
