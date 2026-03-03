@@ -319,16 +319,17 @@ export default function App() {
       pomInt.current=setInterval(()=>{
         setPomS(s=>{
           if(!s.startedAt)return s;
-          const elapsed=Math.floor((Date.now()-s.startedAt)/1000)+s.elapsed;
+          // startedAt基準の絶対時間で計算（二重加算を防ぐ）
+          const elapsed=Math.floor((Date.now()-s.startedAt)/1000);
           const lim=(s.mode==="work"?pomo.workTime:s.mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
           if(elapsed>=lim){
             beep(880,0.5);
             const ns=s.session+1,nm=s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work";
             const newCount=s.mode==="work"?s.todayCount+1:s.todayCount;
             localSave("tm_pomo_session",{todayCount:newCount,date:today()});
-            return{...s,elapsed:0,mode:nm,session:ns,todayCount:newCount,startedAt:Date.now()};
+            return{...s,mode:nm,session:ns,todayCount:newCount,startedAt:Date.now()};
           }
-          return{...s,elapsed};
+          return s; // elapsedはstartedAtから毎回算出するのでstateに保存不要
         });
       },1000);
     }else clearInterval(pomInt.current);
@@ -616,9 +617,19 @@ function Sidebar({view,setView,tasks,sbStatus}){
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
 function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
-  const{active,mode,elapsed,session,todayCount,linkedId}=ps;
+  // 表示用tick（500msごとに再レンダー）
+  const [,setTick]=useState(0);
+  useEffect(()=>{
+    if(!ps.active)return;
+    const id=setInterval(()=>setTick(t=>t+1),500);
+    return()=>clearInterval(id);
+  },[ps.active]);
+
+  const{active,mode,session,todayCount,linkedId,startedAt}=ps;
   const lim=(mode==="work"?pomo.workTime:mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
-  const rem=lim-elapsed;
+  // startedAt基準で算出（state蓄積による指数的増加を防ぐ）
+  const elapsed=active&&startedAt?Math.min(lim,Math.floor((Date.now()-startedAt)/1000)):0;
+  const rem=Math.max(0,lim-elapsed);
   const min=String(Math.floor(rem/60)).padStart(2,"0"),sec=String(rem%60).padStart(2,"0");
   const prog=elapsed/lim;
   const accent={work:T.blue,break:T.mint,longbreak:T.lav}[mode];
@@ -1317,7 +1328,7 @@ function TaskModal({task,projects,groups,onSave,onClose}){
         <div>
           <label style={lbl}>Reference Links</label>
           {(form.links||[]).map((lk,i)=>{const l=normLink(lk);return(
-            <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${T.borderLight}`}}>
+            <div key={lk.url||lk.label||i} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 0",borderBottom:`1px solid ${T.borderLight}`}}>
               <a href={l.url} target="_blank" rel="noopener noreferrer"
                 style={{display:"flex",alignItems:"center",gap:5,background:T.mintBg,border:`1px solid ${T.mint}30`,borderRadius:6,padding:"3px 9px",color:T.mint,fontSize:12,fontWeight:600,textDecoration:"none",flexShrink:0,maxWidth:120,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}
                 title={l.url}>
@@ -1438,7 +1449,7 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
     const ch=projects.filter(p=>p.parentId===proj.id).sort((a,b)=>a.order-b.order);
     const pt=tasks.filter(t=>t.projectId===proj.id),prog=getProg(proj.id);
     const pi=PRIO[proj.priority]||PRIO.medium,si=STATUS[proj.status]||STATUS.todo;
-    const period=proj.startDate&&proj.endDate?`${fmtDateShort(proj.startDate)} → ${fmtDateShort(proj.endDate)}`:proj.endDate?`〜 ${fmtDateShort(proj.endDate)}`:"";
+    const period=proj.startDate&&proj.endDate?`${fmtDateShort(proj.startDate)} → ${fmtDateShort(proj.endDate)}`:proj.endDate?`〜 ${fmtDateShort(proj.endDate)}`:proj.startDate?`${fmtDateShort(proj.startDate)} →`:"期間なし";
     const isDragOver=dragOverProjId===proj.id;
     return(
       <div style={{marginLeft:depth*20,marginBottom:8}}>
@@ -1568,7 +1579,7 @@ function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEdi
   const prog=pt.length?Math.round(done/pt.length*100):0;
   const pi=PRIO[project.priority]||PRIO.medium,si=STATUS[project.status]||STATUS.todo;
   const children=projects.filter(p=>p.parentId===project.id);
-  const period=project.startDate&&project.endDate?`${fmtDate(project.startDate)} → ${fmtDate(project.endDate)}`:project.endDate?`〜 ${fmtDate(project.endDate)}`:"";
+  const period=project.startDate&&project.endDate?`${fmtDate(project.startDate)} → ${fmtDate(project.endDate)}`:project.endDate?`〜 ${fmtDate(project.endDate)}`:project.startDate?`${fmtDate(project.startDate)} →`:"期間なし";
   const handleAddTask=()=>onEditTask({id:null,title:"",status:"todo",priority:"medium",deadline:today(),goalTime:"",repeat:"",projectId:project.id,groupId:null,subtasks:[],notes:"",links:[],completed:false,archived:false});
 
   return(
@@ -1719,7 +1730,7 @@ function ProjectModal({project,projects,projectGroups,defaults,onSave,onClose}){
           <div style={{gridColumn:"1/-1"}}>
             <label style={lbl}>Reference Links</label>
             {(form.links||[]).map((lk,i)=>{const l=normLink(lk);return(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${T.borderLight}`}}>
+              <div key={lk.url||lk.label||i} style={{display:"flex",alignItems:"center",gap:8,padding:"5px 0",borderBottom:`1px solid ${T.borderLight}`}}>
                 <a href={l.url} target="_blank" rel="noopener noreferrer"
                   style={{display:"flex",alignItems:"center",gap:5,background:T.mintBg,border:`1px solid ${T.mint}30`,borderRadius:6,padding:"3px 9px",color:T.mint,fontSize:12,fontWeight:600,textDecoration:"none",flexShrink:0,maxWidth:120,overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}
                   title={l.url}>
@@ -1860,8 +1871,8 @@ function GanttView({projects,projectGroups}){
               <div style={{width:260,flexShrink:0,padding:"9px 18px",fontSize:10,color:T.textMuted,fontWeight:600,letterSpacing:.5,textTransform:"uppercase",borderRight:`1.5px solid ${T.border}`}}>Project</div>
               <div style={{flex:1,position:"relative",height:34}}>
                 {/* Grid lines */}
-                {dh.map((d,i)=>(
-                  <div key={i} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight,height:"100%"}}/>
+                {dh.map(d=>(
+                  <div key={d.lb+"h"} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight,height:"100%"}}/>
                 ))}
                 {dh.map(d=>(
                   <div key={d.lb} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:"50%",transform:"translateY(-50%)",fontSize:10,color:T.textMuted,fontFamily:"JetBrains Mono,monospace",whiteSpace:"nowrap",paddingLeft:4}}>{d.lb}</div>
@@ -1890,6 +1901,7 @@ function GanttView({projects,projectGroups}){
               const barLeft=leftIdx!==null?leftIdx:rightIdx!==null?rightIdx:null;
               const barWidth=leftIdx!==null&&rightIdx!==null?Math.max(1,rightIdx-leftIdx):3;
               const isOverdueProj=proj.endDate&&proj.endDate<today();
+              const noDates=leftIdx===null&&rightIdx===null; // 期間未設定
               return(
                 <div key={proj.id} style={{display:"flex",borderBottom:`1px solid ${T.borderLight}`,minHeight:36}}>
                   <div style={{width:260,flexShrink:0,padding:"7px 18px 7px "+(18+depth*16)+"px",fontSize:12,color:T.text,borderRight:`1.5px solid ${T.borderLight}`,display:"flex",alignItems:"center",gap:8,overflow:"hidden"}}>
