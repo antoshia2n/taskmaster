@@ -79,8 +79,17 @@ const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBef
 const DEF_SETTINGS={uiScale:"medium"};
 
 // ── Storage ───────────────────────────────────────────────────────────────────
-async function localLoad(key,fb){try{const r=await window.storage.get(key);return r?JSON.parse(r.value):fb;}catch(e){return fb;}}
-async function localSave(key,val){try{await window.storage.set(key,JSON.stringify(val));}catch(e){}}
+async function localLoad(key,fb){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fb;}catch(e){return fb;}}
+async function localSave(key,val){
+  try{
+    localStorage.setItem(key,JSON.stringify(val));
+    // Warn if storage is getting large (>3MB of ~5MB limit)
+    const used=JSON.stringify(localStorage).length;
+    if(used>3*1024*1024) console.warn("localStorage usage high:",Math.round(used/1024)+"KB");
+  }catch(e){
+    if(e.name==="QuotaExceededError") console.error("localStorage full — data not saved");
+  }
+}
 
 // ── Supabase REST ─────────────────────────────────────────────────────────────
 class SB{
@@ -105,10 +114,14 @@ export default function App() {
   const [ready,    setReady]     = useState(false);
   const sbRef = useRef(null);
 
-  const syncSB = useCallback(async (key,val) => {
+  const sbTimers = useRef({});
+  const syncSB = useCallback((key,val) => {
     if(!sbRef.current)return;
-    try{await sbRef.current.upsert("app_data",{key,value:val,updated_at:new Date().toISOString()});}
-    catch(e){setSbStatus("error");}
+    clearTimeout(sbTimers.current[key]);
+    sbTimers.current[key]=setTimeout(async()=>{
+      try{await sbRef.current.upsert("app_data",{key,value:val,updated_at:new Date().toISOString()});}
+      catch(e){setSbStatus("error");}
+    },800);
   },[]);
 
   const setTasks    = useCallback(v=>{setTasksR   (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_tasks",n);   syncSB("tasks",n);   return n;});},[syncSB]);
@@ -126,11 +139,17 @@ export default function App() {
       sbRef.current=client;
       const rows=await client.get("app_data");
       const rem={};rows.forEach(r=>{rem[r.key]=r.value;});
+      // Merge strategy: use Supabase data silently (no flash) by batching state updates
+      // Only overwrite if Supabase actually has data for that key
       if(rem.tasks)    setTasksR(rem.tasks.map(x=>({...x,links:normLinks(x.links)})));
       if(rem.projects) setProjectsR(rem.projects.map(x=>({...x,links:normLinks(x.links)})));
       if(rem.groups)   setGroupsR(rem.groups);
       if(rem.pomo)     setPomoR(rem.pomo);
       if(rem.settings) setAppSettingsR(rem.settings);
+      // Push local data up to Supabase if Supabase was empty
+      if(!rem.tasks)    setTasks(t=>t);
+      if(!rem.projects) setProjects(p=>p);
+      if(!rem.groups)   setGroups(g=>g);
       setSbStatus("connected");
     }catch(e){setSbStatus("error");}
   },[]);
@@ -151,7 +170,7 @@ export default function App() {
   },[]);
 
   // Pomodoro
-  const [ps,setPomS]=useState({active:false,mode:"work",elapsed:0,session:0,todayCount:0,linkedId:null});
+  const [ps,setPomS]=useState({active:false,mode:"work",elapsed:0,session:0,todayCount:0,linkedId:null,startedAt:null});
   const pomInt=useRef(null);
   const actx=useRef(null);
   const beep=(freq=440,dur=0.4)=>{
@@ -167,21 +186,23 @@ export default function App() {
     if(ps.active){
       pomInt.current=setInterval(()=>{
         setPomS(s=>{
+          if(!s.startedAt)return s;
+          const elapsed=Math.floor((Date.now()-s.startedAt)/1000)+s.elapsed;
           const lim=(s.mode==="work"?pomo.workTime:s.mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
-          if(s.elapsed+1>=lim){
+          if(elapsed>=lim){
             beep(880,0.5);
             const ns=s.session+1,nm=s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work";
-            return{...s,elapsed:0,mode:nm,session:ns,todayCount:s.mode==="work"?s.todayCount+1:s.todayCount};
+            return{...s,elapsed:0,mode:nm,session:ns,todayCount:s.mode==="work"?s.todayCount+1:s.todayCount,startedAt:Date.now()};
           }
-          return{...s,elapsed:s.elapsed+1};
+          return{...s,elapsed};
         });
       },1000);
     }else clearInterval(pomInt.current);
     return()=>clearInterval(pomInt.current);
   },[ps.active,pomo]);
 
-  const startPom=(id=null)=>{beep(660,0.2);setPomS(s=>({...s,active:true,linkedId:id||s.linkedId}));};
-  const pausePom=()=>setPomS(s=>({...s,active:false}));
+  const startPom=(id=null)=>{beep(660,0.2);setPomS(s=>({...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now()}));};
+  const pausePom=()=>setPomS(s=>({...s,active:false,elapsed:s.startedAt?Math.floor((Date.now()-s.startedAt)/1000)+s.elapsed:s.elapsed,startedAt:null}));
   const skipPom =()=>{beep(550,0.2);setPomS(s=>{const ns=s.session+1;return{...s,elapsed:0,mode:s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work",session:ns,active:false};});};
   const resetPom=()=>setPomS(s=>({...s,elapsed:0,active:false}));
 
@@ -195,7 +216,7 @@ export default function App() {
     if(view==="today")   return a.filter(t=>!t.completed&&t.deadline&&t.deadline<=today());
     if(view==="tomorrow")return a.filter(t=>t.deadline===tomorrow());
     if(view==="week")    return a.filter(t=>t.deadline>=today()&&t.deadline<=weekEnd());
-    return a.filter(t=>!t.completed);
+    return a; // "all" — include completed, TaskView filters by showDone
   },[tasks,view]);
 
   const openProjectDetail=(pid)=>{setSelectedProjectId(pid);setView("project_detail");};
@@ -262,6 +283,11 @@ export default function App() {
                 onOpenDetail={openProjectDetail} doConfirm={doConfirm}/>
             )}
             {view==="gantt"&&<GanttView projects={projects}/>}
+            {view==="archive"&&(
+              <ArchiveView tasks={tasks.filter(t=>t.archived)} projects={projects}
+                onUnarchive={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:false}:t))}
+                onDel={id=>doConfirm("このタスクを完全に削除しますか？",()=>setTasks(ts=>ts.filter(t=>t.id!==id)))}/>
+            )}
             {view==="settings"&&(
               <SettingsView pomo={pomo} setPomo={setPomo}
                 appSettings={appSettings} setAppSettings={setAppSettings}
@@ -304,7 +330,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
   const nav=[
     [{id:"today",icon:<Zap size={16}/>,label:"Today",badge:td},{id:"tomorrow",icon:<Sunrise size={16}/>,label:"Tomorrow"},{id:"week",icon:<Calendar size={16}/>,label:"This Week"},{id:"all",icon:<Inbox size={16}/>,label:"All Tasks",badge:ip}],
     [{id:"projects",icon:<Folder size={16}/>,label:"Projects"},{id:"gantt",icon:<BarChart3 size={16}/>,label:"Gantt Chart"}],
-    [{id:"settings",icon:<Settings size={16}/>,label:"Settings"}],
+    [{id:"archive",icon:<Archive size={16}/>,label:"Archive"},{id:"settings",icon:<Settings size={16}/>,label:"Settings"}],
   ];
   const sbC={connected:T.mint,connecting:T.amber,error:T.peach,disconnected:"#64748B"}[sbStatus];
   const sbL={connected:"Supabase sync",connecting:"接続中...",error:"エラー",disconnected:"ローカル保存"}[sbStatus];
@@ -405,6 +431,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
 // ── Task View ─────────────────────────────────────────────────────────────────
 function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEditTask,onStartPom,doConfirm}){
   const [ntg,setNtg]=useState(null),[ntt,setNtt]=useState("");
+  const [showDone,setShowDone]=useState(false);
   const [dragTask,setDragTask]=useState(null);
   const [dragOverGroup,setDragOverGroup]=useState(null);
   const [dragGroup,setDragGroup]=useState(null);
@@ -414,8 +441,9 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
   const ngComposing=useRef(false);
 
   const undone=tasks.filter(t=>!t.completed).length;
-  const byG=groups.reduce((a,g)=>{a[g.id]=tasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{});
-  const ung=tasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order);
+  const visibleTasks=view==="all"&&!showDone?tasks.filter(t=>!t.completed):tasks;
+  const byG=groups.reduce((a,g)=>{a[g.id]=visibleTasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{});
+  const ung=visibleTasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order);
   const sortedGroups=[...groups].sort((a,b)=>a.order-b.order);
   const vl={today:"Today",tomorrow:"Tomorrow",week:"This Week",all:"All Tasks"};
 
@@ -467,6 +495,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
           <div style={{fontSize:12,color:T.textMuted,marginTop:6}}>{new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
         </div>
         <div style={{display:"flex",gap:8,marginTop:4}}>
+          {view==="all"&&<button onClick={()=>setShowDone(v=>!v)} className="lhbtn" style={{background:showDone?T.blueBg:T.bgCard,border:`1.5px solid ${showDone?T.blue:T.border}`,borderRadius:9,padding:"8px 14px",color:showDone?T.blue:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><CheckCircle2 size={13}/> {showDone?"完了を隠す":"完了を表示"}</button>}
           <button onClick={()=>setShowAG(v=>!v)} className="lhbtn" style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"8px 14px",color:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Hash size={13}/> Add Group</button>
           <button onClick={()=>onEditTask("new")} style={{background:T.blue,border:"none",borderRadius:9,padding:"8px 18px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6,boxShadow:`0 4px 14px ${T.blue}35`}}><Plus size={14}/> Add Task</button>
         </div>
@@ -556,7 +585,7 @@ function GroupEditModal({group,onSave,onClose}){
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} className="lhbtn" style={{padding:"9px 18px",background:"transparent",border:`1.5px solid ${T.border}`,borderRadius:8,color:T.textSec,fontSize:13}}>Cancel</button>
-          <button onClick={()=>onSave(form)} style={{padding:"9px 22px",background:T.blue,border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,boxShadow:`0 4px 14px ${T.blue}35`}}>Save</button>
+          <button onClick={()=>{if(!form.title?.trim())return;onSave(form);}} style={{padding:"9px 22px",background:form.title?.trim()?T.blue:T.textMuted,border:"none",borderRadius:8,color:"#fff",fontSize:13,fontWeight:700,boxShadow:form.title?.trim()?`0 4px 14px ${T.blue}35`:"none",cursor:form.title?.trim()?"pointer":"not-allowed"}}>Save</button>
         </div>
       </div>
     </div>
@@ -1127,9 +1156,64 @@ function ProjectModal({project,projects,defaults,onSave,onClose}){
         </div>
         <div style={{display:"flex",gap:10,justifyContent:"flex-end",marginTop:24,paddingTop:20,borderTop:`1px solid ${T.borderLight}`}}>
           <button onClick={onClose} className="lhbtn" style={{padding:"10px 20px",background:"transparent",border:`1.5px solid ${T.border}`,borderRadius:9,color:T.textSec,fontSize:13,cursor:"pointer"}}>Cancel</button>
-          <button onClick={()=>onSave(form)} style={{padding:"10px 26px",background:T.blue,border:"none",borderRadius:9,color:"#fff",fontSize:13,fontWeight:700,boxShadow:`0 4px 14px ${T.blue}35`,cursor:"pointer"}}>Save</button>
+          <button onClick={()=>{if(!form.title?.trim())return;onSave(form);}} style={{padding:"10px 26px",background:form.title?.trim()?T.blue:T.textMuted,border:"none",borderRadius:9,color:"#fff",fontSize:13,fontWeight:700,boxShadow:form.title?.trim()?`0 4px 14px ${T.blue}35`:"none",cursor:form.title?.trim()?"pointer":"not-allowed"}}>Save</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Archive View ──────────────────────────────────────────────────────────────
+function ArchiveView({tasks,projects,onUnarchive,onDel}){
+  return(
+    <div>
+      <div style={{marginBottom:24}}>
+        <h1 style={{fontFamily:"'Fraunces',serif",fontSize:26,fontWeight:700,color:T.text,marginBottom:4}}>Archive</h1>
+        <div style={{fontSize:13,color:T.textMuted}}>{tasks.length} archived tasks</div>
+      </div>
+
+      {tasks.length===0?(
+        <div style={{textAlign:"center",padding:"80px 20px",color:T.textMuted}}>
+          <Archive size={36} style={{margin:"0 auto 14px",opacity:.3}}/>
+          <div style={{fontSize:15,fontWeight:600,color:T.textSec,marginBottom:6}}>アーカイブは空です</div>
+          <div style={{fontSize:13}}>タスクをアーカイブするとここに表示されます</div>
+        </div>
+      ):(
+        <div style={{display:"flex",flexDirection:"column",gap:6}}>
+          {tasks.map(t=>{
+            const proj=projects.find(x=>x.id===t.projectId);
+            const p=PRIO[t.priority]||PRIO.medium;
+            return(
+              <div key={t.id} style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:12,
+                padding:"11px 14px",display:"flex",alignItems:"center",gap:12,
+                boxShadow:"0 1px 4px rgba(0,0,0,.04)",opacity:.75}}>
+                <CheckCircle2 size={17} color={T.textMuted}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:T.textMuted,textDecoration:"line-through",
+                    overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.title}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4,flexWrap:"wrap"}}>
+                    {t.deadline&&<span style={{fontSize:11,color:T.textMuted,fontFamily:"JetBrains Mono,monospace"}}>{fmtDate(t.deadline)}</span>}
+                    <span style={{fontSize:10,color:p.color,background:p.bg,padding:"1px 6px",borderRadius:8,fontWeight:700}}>{p.label}</span>
+                    {proj&&<span style={{fontSize:10,color:proj.color||T.blue,fontWeight:500}}>{proj.title}</span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:4,flexShrink:0}}>
+                  <button onClick={()=>onUnarchive(t.id)} title="復元"
+                    style={{background:T.mintBg,border:`1px solid ${T.mint}30`,borderRadius:7,
+                      color:T.mint,padding:"5px 10px",fontSize:11,fontWeight:600,display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}>
+                    <RotateCcw size={11}/> 復元
+                  </button>
+                  <button onClick={()=>onDel(t.id)} title="完全に削除"
+                    style={{background:"none",border:`1px solid ${T.border}`,borderRadius:7,
+                      color:T.textMuted,padding:"5px 8px",display:"flex",alignItems:"center",cursor:"pointer"}}>
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
