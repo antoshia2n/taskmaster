@@ -101,6 +101,10 @@ const REPEAT_OPTS=[
 const GROUP_COLORS=[T.blue,T.lav,T.mint,T.amber,T.peach,"#2D4A8A","#B8A9D4","#A8D4B8","#F4A261","#8ECAE6"];
 
 // ── Default Data ──────────────────────────────────────────────────────────────
+const DEF_PROJECT_GROUPS=[
+  {id:"pg_active",title:"進行中",color:T.blue, order:0},
+  {id:"pg_plan",  title:"計画中",color:T.lav,  order:1},
+];
 const DEF_GROUPS=[
   {id:"morning",title:"Morning",color:T.amber,order:0},
   {id:"main",   title:"Focus",  color:T.blue, order:1},
@@ -112,7 +116,7 @@ const DEF_TASKS=[
   {id:"t3",title:"メール返信",status:"todo",priority:"low",deadline:today(),goalTime:"17:00",repeat:"daily",projectId:null,groupId:"evening",subtasks:[],notes:"",links:[],completed:false,archived:false,order:2},
 ];
 const DEF_PROJECTS=[
-  {id:"p1",title:"Webアプリ開発",    status:"inprogress",priority:"high",startDate:"2025-01-01",endDate:"2025-03-31",parentId:null,notes:"メインプロジェクト",links:[],color:T.blue,order:0,expanded:true},
+  {id:"p1",title:"Webアプリ開発",    status:"inprogress",priority:"high",startDate:"2025-01-01",endDate:"2025-03-31",parentId:null,notes:"メインプロジェクト",links:[],color:T.blue,order:0,expanded:true,projectGroupId:"pg_active"},
   {id:"p2",title:"フロントエンド実装",status:"inprogress",priority:"high",startDate:"2025-01-15",endDate:"2025-03-15",parentId:"p1",notes:"",links:[],color:T.lav,order:1,expanded:false},
 ];
 const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBeforeLong:4};
@@ -144,6 +148,7 @@ class SB{
 export default function App() {
   const [tasks,    setTasksR]    = useState(DEF_TASKS);
   const [projects, setProjectsR] = useState(DEF_PROJECTS);
+  const [projectGroups, setProjectGroupsR] = useState(DEF_PROJECT_GROUPS);
   const [groups,   setGroupsR]   = useState(DEF_GROUPS);
   const [pomo,     setPomoR]     = useState(DEF_POMO);
   const [appSettings, setAppSettingsR] = useState(DEF_SETTINGS);
@@ -166,6 +171,7 @@ export default function App() {
 
   const setTasks    = useCallback(v=>{setTasksR   (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_tasks",n);   syncSB("tasks",n);   return n;});},[syncSB]);
   const setProjects = useCallback(v=>{setProjectsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_projects",n);syncSB("projects",n);return n;});},[syncSB]);
+  const setProjectGroups = useCallback(v=>{setProjectGroupsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_project_groups",n);syncSB("project_groups",n);return n;});},[syncSB]);
   const setGroups   = useCallback(v=>{setGroupsR  (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_groups",n); syncSB("groups",n); return n;});},[syncSB]);
   const setPomo     = useCallback(v=>{setPomoR     (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_pomo",n);  syncSB("pomo",n);   return n;});},[syncSB]);
   const setAppSettings = useCallback(v=>{setAppSettingsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_settings",n);syncSB("settings",n);return n;});},[syncSB]);
@@ -184,26 +190,29 @@ export default function App() {
       if(rem.tasks)    setTasksR(rem.tasks.map(x=>({...x,links:normLinks(x.links)})));
       if(rem.projects) setProjectsR(rem.projects.map(x=>({...x,links:normLinks(x.links)})));
       if(rem.groups)   setGroupsR(rem.groups);
+      if(rem.project_groups) setProjectGroupsR(rem.project_groups);
       if(rem.pomo)     setPomoR(rem.pomo);
       if(rem.settings) setAppSettingsR(rem.settings);
       // Push local data up to Supabase if Supabase was empty
       if(!rem.tasks)    setTasks(t=>t);
       if(!rem.projects) setProjects(p=>p);
       if(!rem.groups)   setGroups(g=>g);
+      if(!rem.project_groups) setProjectGroups(pg=>pg);
       setSbStatus("connected");
     }catch(e){setSbStatus("error");}
   },[]);
 
   useEffect(()=>{
     (async()=>{
-      const [t,p,g,pm,sb,st]=await Promise.all([
+      const [t,p,g,pg,pm,sb,st]=await Promise.all([
         localLoad("tm_tasks",DEF_TASKS),localLoad("tm_projects",DEF_PROJECTS),
-        localLoad("tm_groups",DEF_GROUPS),localLoad("tm_pomo",DEF_POMO),
+        localLoad("tm_groups",DEF_GROUPS),localLoad("tm_project_groups",DEF_PROJECT_GROUPS),
+        localLoad("tm_pomo",DEF_POMO),
         localLoad("tm_sbcfg",{url:"",key:""}),localLoad("tm_settings",DEF_SETTINGS),
       ]);
       setTasksR(t.map(x=>({...x,links:normLinks(x.links)}))); 
       setProjectsR(p.map(x=>({...x,links:normLinks(x.links)})));
-      setGroupsR(g);setPomoR(pm);setSbCfgR(sb);setAppSettingsR(st);
+      setGroupsR(g);setProjectGroupsR(pg);setPomoR(pm);setSbCfgR(sb);setAppSettingsR(st);
       // Restore today's pomodoro count (reset if new day)
       const ps=await localLoad("tm_pomo_session",{todayCount:0,date:today()});
       if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount}));
@@ -314,6 +323,8 @@ export default function App() {
   .main-pad{padding:16px 14px!important;}
   .tr{padding:9px 10px!important;}
   .modal .fi{width:96%!important;max-height:90vh;overflow-y:auto;}
+  .pomobar{padding:6px 14px!important;}
+  .pomobar .pomobar-title{display:none!important;}
 }
 @media(min-width:769px){
   .mobile-tabs{display:none!important;}
@@ -335,8 +346,8 @@ export default function App() {
                 searchQ={searchQ} setSearchQ={setSearchQ}/>
             )}
             {view==="projects"&&(
-              <ProjectView projects={projects} tasks={tasks.filter(t=>!t.archived)}
-                setProjects={setProjects} setTasks={setTasks}
+              <ProjectView projects={projects} projectGroups={projectGroups} tasks={tasks.filter(t=>!t.archived)}
+                setProjects={setProjects} setProjectGroups={setProjectGroups} setTasks={setTasks}
                 onEditProj={setEditProj} onEditTask={setEditTask}
                 doConfirm={doConfirm} onOpenDetail={openProjectDetail}/>
             )}
@@ -349,7 +360,7 @@ export default function App() {
                 onEditTask={setEditTask} onEditProj={setEditProj}
                 onOpenDetail={openProjectDetail} doConfirm={doConfirm}/>
             )}
-            {view==="gantt"&&<GanttView projects={projects}/>}
+            {view==="gantt"&&<GanttView projects={projects} projectGroups={projectGroups}/>}
             {view==="archive"&&(
               <ArchiveView tasks={tasks.filter(t=>t.archived)} projects={projects}
                 onUnarchive={id=>setTasks(ts=>ts.map(t=>t.id===id?{...t,archived:false}:t))}
@@ -371,7 +382,7 @@ export default function App() {
           onClose={()=>setEditTask(null)}/>
       )}
       {editProj!==null&&(
-        <ProjectModal project={editProj?.id?editProj:null} defaults={editProj?.id?null:editProj} projects={projects}
+        <ProjectModal project={editProj?.id?editProj:null} defaults={editProj?.id?null:editProj} projects={projects} projectGroups={projectGroups}
           onSave={p=>{editProj?.id?setProjects(ps=>ps.map(x=>x.id===p.id?p:x)):setProjects(ps=>[...ps,{...p,id:uid(),order:ps.length,expanded:true}]);setEditProj(null);}}
           onClose={()=>setEditProj(null)}/>
       )}
@@ -485,7 +496,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
   const linkedTask=tasks.find(t=>t.id===linkedId);
   const r=16,circ=2*Math.PI*r;
   return(
-    <div style={{background:T.bgCard,borderBottom:`1.5px solid ${T.border}`,padding:"10px 32px",display:"flex",alignItems:"center",gap:18,flexShrink:0,boxShadow:"0 1px 6px rgba(0,0,0,.04)"}}>
+    <div className="pomobar" style={{background:T.bgCard,borderBottom:`1.5px solid ${T.border}`,padding:"10px 32px",display:"flex",alignItems:"center",gap:18,flexShrink:0,boxShadow:"0 1px 6px rgba(0,0,0,.04)"}}>
       <div style={{display:"flex",alignItems:"center",gap:14}}>
         <div style={{position:"relative",width:42,height:42,flexShrink:0}}>
           <svg width="42" height="42" style={{transform:"rotate(-90deg)"}}>
@@ -1098,8 +1109,13 @@ function TaskModal({task,projects,groups,onSave,onClose}){
 }
 
 // ── Project View ──────────────────────────────────────────────────────────────
-function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,doConfirm,onOpenDetail}){
-  const roots=projects.filter(p=>!p.parentId).sort((a,b)=>a.order-b.order);
+function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,setTasks,onEditProj,onEditTask,doConfirm,onOpenDetail}){
+  const [dragProj, setDragProj]=useState(null);
+  const [dragOverProjId, setDragOverProjId]=useState(null);
+  const [newGrpName, setNewGrpName]=useState("");
+  const [showNewGrp, setShowNewGrp]=useState(false);
+  const grpComposing=useRef(false);
+
   const toggle=id=>setProjects(ps=>ps.map(p=>p.id===id?{...p,expanded:!p.expanded}:p));
   const delP=id=>doConfirm("このプロジェクトを削除しますか？",()=>{
     setProjects(ps=>ps.filter(p=>p.id!==id&&p.parentId!==id));
@@ -1108,16 +1124,67 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
   const getProg=id=>{const pt=tasks.filter(t=>t.projectId===id);return pt.length?Math.round(pt.filter(t=>t.completed).length/pt.length*100):0;};
   const handleAddTask=proj=>onEditTask({id:null,title:"",status:"todo",priority:"medium",deadline:today(),goalTime:"",repeat:"",projectId:proj.id,groupId:null,subtasks:[],notes:"",links:[],completed:false,archived:false});
 
-  const Card=({proj,depth=0})=>{
+  const addGroup=()=>{
+    if(!newGrpName.trim())return;
+    setProjectGroups(gs=>[...gs,{id:uid(),title:newGrpName.trim(),color:GROUP_COLORS[gs.length%GROUP_COLORS.length],order:gs.length}]);
+    setNewGrpName("");setShowNewGrp(false);
+  };
+  const delGroup=id=>doConfirm("このグループを削除しますか？（プロジェクトは未分類になります）",()=>{
+    setProjectGroups(gs=>gs.filter(g=>g.id!==id));
+    setProjects(ps=>ps.map(p=>p.projectGroupId===id?{...p,projectGroupId:null}:p));
+  });
+
+  // Drag handlers for project cards
+  const handleProjDS=(e,proj)=>{setDragProj(proj);e.dataTransfer.effectAllowed="move";};
+  const handleProjDrop=(e,targetId)=>{
+    e.preventDefault();setDragOverProjId(null);
+    if(!dragProj)return;
+    // targetId is either a groupId or a projectId
+    setProjects(ps=>{
+      const isProj=ps.some(p=>p.id===targetId);
+      if(!isProj){
+        // Drop on group header → move to that group, append at end
+        return ps.map(p=>p.id===dragProj.id?{...p,projectGroupId:targetId}:p);
+      }
+      const target=ps.find(p=>p.id===targetId);
+      if(!target||target.id===dragProj.id)return ps;
+      const gid=target.projectGroupId;
+      const inGroup=ps.filter(p=>p.projectGroupId===gid&&!p.parentId&&p.id!==dragProj.id).sort((a,b)=>a.order-b.order);
+      const insertAt=inGroup.findIndex(p=>p.id===targetId);
+      inGroup.splice(insertAt,0,dragProj);
+      const orderMap={};inGroup.forEach((p,i)=>{orderMap[p.id]=i;});
+      return ps.map(p=>{
+        if(p.id===dragProj.id) return{...p,projectGroupId:gid,order:orderMap[p.id]??p.order};
+        if(orderMap[p.id]!==undefined) return{...p,order:orderMap[p.id]};
+        return p;
+      });
+    });
+    setDragProj(null);
+  };
+
+  const sortedGroups=[...projectGroups].sort((a,b)=>a.order-b.order);
+  const byPG=sortedGroups.reduce((acc,g)=>{
+    acc[g.id]=projects.filter(p=>!p.parentId&&p.projectGroupId===g.id).sort((a,b)=>a.order-b.order);
+    return acc;
+  },{});
+  const ungrouped=projects.filter(p=>!p.parentId&&!projectGroups.find(g=>g.id===p.projectGroupId)).sort((a,b)=>a.order-b.order);
+
+  const PCard=({proj,depth=0})=>{
     const ch=projects.filter(p=>p.parentId===proj.id).sort((a,b)=>a.order-b.order);
     const pt=tasks.filter(t=>t.projectId===proj.id),prog=getProg(proj.id);
     const pi=PRIO[proj.priority]||PRIO.medium,si=STATUS[proj.status]||STATUS.todo;
     const period=proj.startDate&&proj.endDate?`${fmtDateShort(proj.startDate)} → ${fmtDateShort(proj.endDate)}`:proj.endDate?`〜 ${fmtDateShort(proj.endDate)}`:"";
+    const isDragOver=dragOverProjId===proj.id;
     return(
-      <div style={{marginLeft:depth*24,marginBottom:10}}>
-        <div style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+      <div style={{marginLeft:depth*20,marginBottom:8}}>
+        <div draggable={depth===0} onDragStart={depth===0?e=>handleProjDS(e,proj):undefined}
+          onDragOver={depth===0?e=>{e.preventDefault();setDragOverProjId(proj.id);}:undefined}
+          onDragLeave={depth===0?()=>setDragOverProjId(null):undefined}
+          onDrop={depth===0?e=>handleProjDrop(e,proj.id):undefined}
+          style={{background:T.bgCard,border:`1.5px solid ${isDragOver?proj.color||T.blue:T.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.04)",transition:"border-color .15s"}}>
           <div style={{height:3,background:T.borderLight}}><div style={{height:"100%",width:`${prog}%`,background:proj.color||T.blue,transition:"width .5s ease"}}/></div>
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px"}}>
+            {depth===0&&<GripVertical size={13} color={T.textMuted} style={{flexShrink:0,opacity:.4,cursor:"grab"}}/>}
             <button onClick={()=>toggle(proj.id)} style={{background:"none",border:"none",color:T.textMuted,padding:0,cursor:"pointer",display:"flex"}}>{proj.expanded?<ChevronDown size={15}/>:<ChevronRight size={15}/>}</button>
             <div style={{width:10,height:10,borderRadius:"50%",background:proj.color||T.blue,flexShrink:0}}/>
             <div style={{flex:1,overflow:"hidden",cursor:"pointer"}} onClick={()=>onOpenDetail(proj.id)}>
@@ -1134,7 +1201,7 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
           </div>
           {proj.expanded&&(
             <div style={{padding:"0 18px 16px",borderTop:`1px solid ${T.borderLight}`,paddingTop:14}}>
-              {proj.notes&&<p style={{fontSize:12,color:T.textSec,marginBottom:12,lineHeight:1.7}}>{proj.notes}</p>}
+              {proj.notes&&<p style={{fontSize:12,color:T.textSec,marginBottom:12,lineHeight:1.7,whiteSpace:"pre-wrap"}}>{proj.notes}</p>}
               {pt.length>0&&(
                 <div style={{marginBottom:14}}>
                   {pt.slice(0,4).map(t=>(
@@ -1147,7 +1214,7 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
                   {pt.length>4&&<button onClick={()=>onOpenDetail(proj.id)} style={{fontSize:11,color:T.blue,background:"none",border:"none",marginTop:5,cursor:"pointer",padding:0}}>+{pt.length-4} more → view all</button>}
                 </div>
               )}
-              <div style={{display:"flex",gap:8}}>
+              <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                 <button onClick={()=>handleAddTask(proj)} className="lhbtn" style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 13px",color:T.textSec,fontSize:12,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><Plus size={13}/> Add Task</button>
                 <button onClick={()=>onEditProj({parentId:proj.id})} className="lhbtn" style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 13px",color:T.textSec,fontSize:12,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><FolderOpen size={13}/> Sub-project</button>
                 <button onClick={()=>onOpenDetail(proj.id)} className="lhbtn" style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 13px",color:T.blue,fontSize:12,display:"flex",alignItems:"center",gap:5,cursor:"pointer"}}><ChevronRight size={13}/> Detail</button>
@@ -1162,19 +1229,58 @@ function ProjectView({projects,tasks,setProjects,setTasks,onEditProj,onEditTask,
             </div>
           )}
         </div>
-        {proj.expanded&&ch.map(c=><Card key={c.id} proj={c} depth={depth+1}/>)}
+        {proj.expanded&&ch.map(c=><PCard key={c.id} proj={c} depth={depth+1}/>)}
       </div>
     );
   };
 
+  const PGroup=({group,projs})=>(
+    <div style={{marginBottom:28}}
+      onDragOver={e=>{e.preventDefault();}}
+      onDrop={e=>handleProjDrop(e,group.id)}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12,padding:"0 2px"}}>
+        <div style={{width:9,height:9,borderRadius:"50%",background:group.color,flexShrink:0}}/>
+        <span style={{fontSize:11,fontWeight:700,color:T.textSec,letterSpacing:.5,textTransform:"uppercase"}}>{group.title}</span>
+        <span style={{fontSize:11,color:T.textMuted,fontFamily:"JetBrains Mono,monospace"}}>{projs.length}</span>
+        <div style={{height:1,flex:1,background:T.borderLight}}/>
+        <button onClick={()=>delGroup(group.id)} className="lhbtn" style={{background:"none",border:"none",color:T.textMuted,padding:"2px 5px",borderRadius:5,cursor:"pointer",display:"flex"}}><X size={12}/></button>
+      </div>
+      {projs.map(p=><PCard key={p.id} proj={p}/>)}
+      {projs.length===0&&(
+        <div style={{padding:"14px 18px",color:T.textMuted,fontSize:12,textAlign:"center",background:T.bgCard,borderRadius:10,border:`1.5px dashed ${T.borderLight}`}}>
+          プロジェクトをここにドロップ
+        </div>
+      )}
+    </div>
+  );
+
   return(
     <div className="fi">
-      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:28}}>
+      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:24}}>
         <h1 style={{fontFamily:"'Fraunces',serif",fontSize:28,fontWeight:700,letterSpacing:-.5,color:T.text}}>Projects</h1>
-        <button onClick={()=>onEditProj({})} style={{background:T.blue,border:"none",borderRadius:9,padding:"9px 18px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6,boxShadow:`0 4px 14px ${T.blue}35`,cursor:"pointer"}}><Plus size={14}/> Add Project</button>
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>setShowNewGrp(v=>!v)} className="lhbtn" style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 14px",color:T.textSec,fontSize:12,fontWeight:500,display:"flex",alignItems:"center",gap:6}}><Hash size={13}/> Add Group</button>
+          <button onClick={()=>onEditProj({})} style={{background:T.blue,border:"none",borderRadius:9,padding:"9px 18px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:6,boxShadow:`0 4px 14px ${T.blue}35`,cursor:"pointer"}}><Plus size={14}/> Add Project</button>
+        </div>
       </div>
-      {roots.map(p=><Card key={p.id} proj={p}/>)}
-      {roots.length===0&&(
+
+      {showNewGrp&&(
+        <div style={{display:"flex",gap:8,marginBottom:18}}>
+          <input value={newGrpName} onChange={e=>setNewGrpName(e.target.value)}
+            onCompositionStart={()=>{grpComposing.current=true;}} onCompositionEnd={()=>{grpComposing.current=false;}}
+            onKeyDown={e=>{if(e.key==="Enter"&&!grpComposing.current)addGroup();if(e.key==="Escape")setShowNewGrp(false);}}
+            placeholder="グループ名を入力..." autoFocus
+            style={{flex:1,background:T.bgCard,border:`1.5px solid ${T.blue}`,borderRadius:9,padding:"9px 14px",color:T.text,fontSize:13,outline:"none"}}/>
+          <button onClick={addGroup} style={{background:T.blue,border:"none",borderRadius:9,padding:"9px 18px",color:"#fff",fontWeight:700,fontSize:13,cursor:"pointer"}}>追加</button>
+          <button onClick={()=>setShowNewGrp(false)} className="lhbtn" style={{background:"none",border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 12px",color:T.textSec,cursor:"pointer"}}><X size={14}/></button>
+        </div>
+      )}
+
+      {sortedGroups.map(g=><PGroup key={g.id} group={g} projs={byPG[g.id]||[]}/>)}
+      {ungrouped.length>0&&(
+        <PGroup group={{id:"__ungrouped",title:"未分類",color:T.textMuted,order:999}} projs={ungrouped}/>
+      )}
+      {projects.filter(p=>!p.parentId).length===0&&(
         <div style={{textAlign:"center",padding:"80px 20px",color:T.textMuted}}>
           <Folder size={36} style={{margin:"0 auto 14px",opacity:.3}}/>
           <div style={{fontSize:15,fontWeight:600,color:T.textSec,marginBottom:6}}>No projects yet</div>
@@ -1301,7 +1407,7 @@ function ProjectDetail({project,projects,tasks,setTasks,setProjects,onBack,onEdi
 }
 
 // ── Project Modal ─────────────────────────────────────────────────────────────
-function ProjectModal({project,projects,defaults,onSave,onClose}){
+function ProjectModal({project,projects,projectGroups,defaults,onSave,onClose}){
   const EMPTY={title:"",status:"todo",priority:"medium",startDate:"",endDate:"",parentId:null,notes:"",links:[],color:T.blue,expanded:true};
   const [form,setForm]=useState(project||{...EMPTY,...(defaults||{})});
   const[nlUrl,setNlUrl]=useState(""),[nlLabel,setNlLabel]=useState("");
@@ -1332,6 +1438,7 @@ function ProjectModal({project,projects,defaults,onSave,onClose}){
             <input type="date" value={form.endDate||""} onChange={e=>set("endDate",e.target.value)} style={inp}/>
           </div>
           <div><label style={lbl}>Parent Project</label><select value={form.parentId||""} onChange={e=>set("parentId",e.target.value||null)} style={inp}><option value="">None (root)</option>{projects.filter(p=>!p.parentId&&p.id!==form.id).map(p=><option key={p.id} value={p.id}>{p.title}</option>)}</select></div>
+          <div><label style={lbl}>グループ</label><select value={form.projectGroupId||""} onChange={e=>set("projectGroupId",e.target.value||null)} style={inp}><option value="">未分類</option>{(projectGroups||[]).sort((a,b)=>a.order-b.order).map(g=><option key={g.id} value={g.id}>{g.title}</option>)}</select></div>
           <div style={{gridColumn:"1/-1"}}>
             <label style={lbl}>Color</label>
             <div style={{display:"flex",gap:9,flexWrap:"wrap"}}>
@@ -1430,7 +1537,7 @@ function ArchiveView({tasks,projects,onUnarchive,onDel}){
 }
 
 // ── Gantt View (Projects only, with period bars) ───────────────────────────────
-function GanttView({projects}){
+function GanttView({projects,projectGroups}){
   const now=new Date();
   // Compute visible range: earliest startDate - 7d to latest endDate + 14d
   const allDates=[...projects.map(p=>p.startDate).filter(Boolean),...projects.map(p=>p.endDate).filter(Boolean)];
@@ -1448,15 +1555,28 @@ function GanttView({projects}){
     dh.push({l:i,lb:d.toLocaleDateString("en-US",{month:"short",day:"numeric"})});
   }
 
-  // Build hierarchical display
+  // Build hierarchical display — follow projectGroups order
   const rows=[];
+  const addGroupHeader=(group)=>rows.push({type:"group",group});
   const renderProj=(proj,depth=0)=>{
-    rows.push({proj,depth});
+    rows.push({type:"proj",proj,depth});
     if(proj.expanded){
       projects.filter(p=>p.parentId===proj.id).sort((a,b)=>a.order-b.order).forEach(c=>renderProj(c,depth+1));
     }
   };
-  projects.filter(p=>!p.parentId).sort((a,b)=>a.order-b.order).forEach(p=>renderProj(p));
+  const sortedPGs=[...(projectGroups||[])].sort((a,b)=>a.order-b.order);
+  sortedPGs.forEach(g=>{
+    const gProjs=projects.filter(p=>!p.parentId&&p.projectGroupId===g.id).sort((a,b)=>a.order-b.order);
+    if(gProjs.length===0)return;
+    addGroupHeader(g);
+    gProjs.forEach(p=>renderProj(p));
+  });
+  // Ungrouped projects at the end
+  const ungroupedPGs=projects.filter(p=>!p.parentId&&!sortedPGs.find(g=>g.id===p.projectGroupId)).sort((a,b)=>a.order-b.order);
+  if(ungroupedPGs.length>0){
+    addGroupHeader({id:"__ung",title:"未分類",color:"#94A3B8"});
+    ungroupedPGs.forEach(p=>renderProj(p));
+  }
 
   return(
     <div className="fi">
@@ -1480,7 +1600,21 @@ function GanttView({projects}){
             </div>
 
             {/* Rows */}
-            {rows.map(({proj,depth})=>{
+            {rows.map((row,ri)=>{
+              if(row.type==="group") return(
+                <div key={row.group.id} style={{display:"flex",borderBottom:`1px solid ${T.borderLight}`,background:T.bg,minHeight:28}}>
+                  <div style={{width:260,flexShrink:0,padding:"6px 18px",borderRight:`1.5px solid ${T.borderLight}`,display:"flex",alignItems:"center",gap:8}}>
+                    <div style={{width:7,height:7,borderRadius:"50%",background:row.group.color,flexShrink:0}}/>
+                    <span style={{fontSize:10,fontWeight:700,color:T.textSec,letterSpacing:.5,textTransform:"uppercase"}}>{row.group.title}</span>
+                  </div>
+                  <div style={{flex:1,background:T.bg,position:"relative"}}>
+                    {dh.map((d,i)=>(
+                      <div key={i} style={{position:"absolute",left:`${(d.l/total)*100}%`,top:0,bottom:0,borderLeft:"1px solid "+T.borderLight}}/>
+                    ))}
+                  </div>
+                </div>
+              );
+              const {proj,depth}=row;
               const leftIdx=gl(proj.startDate);
               const rightIdx=gl(proj.endDate);
               const barLeft=leftIdx!==null?leftIdx:rightIdx!==null?rightIdx:null;
