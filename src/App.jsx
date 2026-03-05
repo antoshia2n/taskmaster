@@ -336,10 +336,29 @@ export default function App() {
     return()=>clearInterval(pomInt.current);
   },[ps.active,pomo]);
 
-  const startPom=(id=null)=>{beep(660,0.2);setPomS(s=>({...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now()}));};
-  const pausePom=()=>setPomS(s=>({...s,active:false,elapsed:s.startedAt?Math.floor((Date.now()-s.startedAt)/1000)+s.elapsed:s.elapsed,startedAt:null}));
-  const skipPom =()=>{beep(550,0.2);setPomS(s=>{const ns=s.session+1;return{...s,elapsed:0,mode:s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work",session:ns,active:false};});};
-  const resetPom=()=>setPomS(s=>({...s,elapsed:0,active:false}));
+  const startPom=(id=null)=>{
+    setPomS(s=>{
+      if(s.active&&id&&s.linkedId===id) return s; // 同じタスク再押し→何もしない
+      if(s.active&&id&&s.linkedId!==id) return{...s,linkedId:id}; // 別タスク→linkedId切替のみ
+      beep(660,0.2);
+      return{...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now(),pausedAt:null};
+    });
+  };
+  const pausePom=()=>setPomS(s=>{
+    if(!s.active||!s.startedAt) return s;
+    return{...s,active:false,pausedAt:Date.now()};
+  });
+  const resumePom=()=>setPomS(s=>{
+    if(s.active||!s.pausedAt) return s;
+    const gap=Date.now()-s.pausedAt;
+    return{...s,active:true,startedAt:(s.startedAt||Date.now())+gap,pausedAt:null};
+  });
+  const skipPom=()=>{beep(550,0.2);setPomS(s=>{
+    const ns=s.session+1;
+    return{...s,mode:s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work",
+      session:ns,startedAt:s.active?Date.now():null,pausedAt:null};
+  });};
+  const resetPom=()=>setPomS(s=>({...s,active:false,startedAt:null,pausedAt:null}));
 
   const [confirm, setConfirm]=useState(null);
   const [searchQ,setSearchQ]=useState("");
@@ -456,7 +475,7 @@ export default function App() {
       <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onSkip={skipPom} onReset={resetPom}/>
+        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom}/>
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
           <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
@@ -616,19 +635,23 @@ function Sidebar({view,setView,tasks,sbStatus}){
 }
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
-function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
+function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset}){
   // 表示用tick（500msごとに再レンダー）
   const [,setTick]=useState(0);
   useEffect(()=>{
-    if(!ps.active)return;
+    if(!ps.active&&!ps.pausedAt)return; // 完全停止中は tick 不要
+    if(ps.pausedAt&&!ps.active) return; // 一時停止中は時計止まる
     const id=setInterval(()=>setTick(t=>t+1),500);
     return()=>clearInterval(id);
-  },[ps.active]);
+  },[ps.active,ps.pausedAt]);
 
-  const{active,mode,session,todayCount,linkedId,startedAt}=ps;
+  const{active,mode,session,todayCount,linkedId,startedAt,pausedAt}=ps;
+  const isPaused=!active&&!!pausedAt; // 一時停止中（resume可能）
   const lim=(mode==="work"?pomo.workTime:mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
-  // startedAt基準で算出（state蓄積による指数的増加を防ぐ）
-  const elapsed=active&&startedAt?Math.min(lim,Math.floor((Date.now()-startedAt)/1000)):0;
+  // startedAt基準で算出（二重加算なし）
+  const elapsed=startedAt
+    ? Math.min(lim, Math.floor(((active?Date.now():pausedAt||Date.now())-startedAt)/1000))
+    : 0;
   const rem=Math.max(0,lim-elapsed);
   const min=String(Math.floor(rem/60)).padStart(2,"0"),sec=String(rem%60).padStart(2,"0");
   const prog=elapsed/lim;
@@ -658,8 +681,19 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onSkip,onReset}){
       </div>
       <div style={{display:"flex",gap:7}}>
         {active
-          ?<button className="lhbtn" onClick={onPause} style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 14px",color:T.text,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}><Pause size={13}/> Pause</button>
-          :<button onClick={()=>onStart()} style={{background:accent,border:"none",borderRadius:8,padding:"7px 16px",color:"#fff",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,boxShadow:`0 3px 10px ${accent}40`}}><Play size={13}/> Start</button>
+          ? <button className="lhbtn" onClick={onPause}
+              style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 14px",color:T.text,fontSize:12,fontWeight:600,display:"flex",alignItems:"center",gap:5}}>
+              <Pause size={13}/> Pause
+            </button>
+          : isPaused
+            ? <button onClick={onResume}
+                style={{background:accent,border:"none",borderRadius:8,padding:"7px 16px",color:"#fff",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,boxShadow:`0 3px 10px ${accent}40`}}>
+                <Play size={13}/> Resume
+              </button>
+            : <button onClick={()=>onStart()}
+                style={{background:accent,border:"none",borderRadius:8,padding:"7px 16px",color:"#fff",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",gap:5,boxShadow:`0 3px 10px ${accent}40`}}>
+                <Play size={13}/> Start
+              </button>
         }
         <button className="lhbtn" onClick={onSkip}  style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.textSec}}><SkipForward size={13}/></button>
         <button className="lhbtn" onClick={onReset} style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.textSec}}><RotateCcw size={13}/></button>
@@ -844,7 +878,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
                       const t2=ts.find(x=>x.id===id);if(!t2)return ts;
                       const nowDone=!t2.completed;
                       const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
-                      if(nowDone&&t2.repeat){const nd=nextRepeatDate(t2.deadline,t2.repeat);if(nd)return[...updated,{...t2,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];}
+                      if(nowDone&&t2.repeat){const nd=nextRepeatDate(t2.deadline,t2.repeat);if(nd)return[...updated,{...t2,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length,subtasks:(t2.subtasks||[]).map(s=>({...s,done:false}))}];}
                       return updated;
                     })}
                     onEdit={onEditTask}
@@ -874,7 +908,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
             const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
             if(nowDone&&t.repeat){
               const nd=nextRepeatDate(t.deadline,t.repeat);
-              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];
+              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length,subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}];
             }
             return updated;
           })}
@@ -898,7 +932,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
             const updated=ts.map(x=>x.id===id?{...x,completed:nowDone,status:nowDone?"done":"todo"}:x);
             if(nowDone&&t.repeat){
               const nd=nextRepeatDate(t.deadline,t.repeat);
-              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length}];
+              if(nd) return [...updated,{...t,id:uid(),deadline:nd,completed:false,status:"todo",order:ts.length,subtasks:(t.subtasks||[]).map(s=>({...s,done:false}))}];
             }
             return updated;
           })}
