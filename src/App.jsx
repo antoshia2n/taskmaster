@@ -123,7 +123,7 @@ const DEF_PROJECTS=[
   {id:"p2",title:"フロントエンド実装",status:"inprogress",priority:"high",startDate:"2025-01-15",endDate:"2025-03-15",parentId:"p1",notes:"",links:[],color:T.lav,order:1,expanded:false},
 ];
 const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBeforeLong:4};
-const DEF_SETTINGS={uiScale:"medium",theme:"auto"};
+const DEF_SETTINGS={uiScale:"medium",theme:"auto",notifyPomo:true,notifyTasks:true};
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 async function localLoad(key,fb){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fb;}catch(e){return fb;}}
@@ -146,6 +146,25 @@ class SB{
   async upsert(t,row){const r=await fetch(`${this.url}/rest/v1/${t}`,{method:"POST",headers:{...this.h(),"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(row)});if(!r.ok)throw new Error();}
   async test(){const r=await fetch(`${this.url}/rest/v1/app_data?limit=1`,{headers:this.h()});return r.ok;}
 }
+
+// ── Notification helper ───────────────────────────────────────────────────────
+function notify(title, body, tag="tm"){
+  if(!("Notification" in window)) return;
+  if(Notification.permission!=="granted") return;
+  try{
+    new Notification(title,{body,tag,icon:"/icon-192.png",badge:"/icon-192.png",silent:false});
+  }catch(e){
+    // iOS PWA では ServiceWorker 経由が必要なケースがある（fallback: 無視）
+  }
+}
+
+async function requestNotifyPermission(){
+  if(!("Notification" in window)) return "unsupported";
+  if(Notification.permission==="granted") return "granted";
+  if(Notification.permission==="denied") return "denied";
+  return await Notification.requestPermission();
+}
+
 
 // ── Pointer Drag System ───────────────────────────────────────────────────────
 const dragState = {
@@ -295,14 +314,19 @@ export default function App() {
       setGroupsR(g);setProjectGroupsR(pg);setPomoR(pm);setSbCfgR(sb);setAppSettingsR(st);
       // Restore today's pomodoro count (reset if new day)
       const ps=await localLoad("tm_pomo_session",{todayCount:0,date:today()});
-      if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount}));
+      if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount,lastCountDate:today()}));
+      else setPomS(s=>({...s,todayCount:0,lastCountDate:today()})); // 新しい日はリセット
       if(sb.url&&sb.key)await connectSB(sb.url,sb.key);
       setReady(true);
+      // 通知権限をリクエスト（まだ決定していない場合のみ）
+      if("Notification" in window && Notification.permission==="default"){
+        requestNotifyPermission();
+      }
     })();
   },[]);
 
   // Pomodoro
-  const [ps,setPomS]=useState({active:false,mode:"work",elapsed:0,session:0,todayCount:0,linkedId:null,startedAt:null});
+  const [ps,setPomS]=useState({active:false,mode:"work",elapsed:0,session:0,todayCount:0,lastCountDate:today(),linkedId:null,startedAt:null});
   const pomInt=useRef(null);
   const actx=useRef(null);
   const beep=(freq=440,dur=0.4)=>{
@@ -325,9 +349,19 @@ export default function App() {
           if(elapsed>=lim){
             beep(880,0.5);
             const ns=s.session+1,nm=s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work";
-            const newCount=s.mode==="work"?s.todayCount+1:s.todayCount;
+            // 日付をまたいでいたら todayCount をリセット
+            const isToday=s.lastCountDate===today();
+            const base=isToday?s.todayCount:0;
+            const newCount=s.mode==="work"?base+1:base;
             localSave("tm_pomo_session",{todayCount:newCount,date:today()});
-            return{...s,mode:nm,session:ns,todayCount:newCount,startedAt:Date.now()};
+            // 通知
+            if(appSettings.notifyPomo){
+              if(s.mode==="work")
+                notify("🍅 集中セッション完了",`${newCount}回目 完了。休憩しましょう。`,"pomo-done");
+              else
+                notify("⏰ 休憩終了","次のセッションを始めましょう。","pomo-break");
+            }
+            return{...s,mode:nm,session:ns,todayCount:newCount,lastCountDate:today(),startedAt:Date.now()};
           }
           return s; // elapsedはstartedAtから毎回算出するのでstateに保存不要
         });
@@ -355,8 +389,11 @@ export default function App() {
   });
   const skipPom=()=>{beep(550,0.2);setPomS(s=>{
     const ns=s.session+1;
+    const isToday=s.lastCountDate===today();
     return{...s,mode:s.mode==="work"?(ns%pomo.sessionsBeforeLong===0?"longbreak":"break"):"work",
-      session:ns,startedAt:s.active?Date.now():null,pausedAt:null};
+      session:ns,startedAt:s.active?Date.now():null,pausedAt:null,
+      todayCount:isToday?s.todayCount:0, // 日付またぎでリセット
+      lastCountDate:today()};
   });};
   const resetPom=()=>setPomS(s=>({...s,active:false,startedAt:null,pausedAt:null}));
 
@@ -365,6 +402,30 @@ export default function App() {
   const [editTask,setEditTask]=useState(null);
   const [editProj,setEditProj]=useState(null);
   const doConfirm=(msg,fn)=>setConfirm({msg,fn});
+
+  // ── Task goalTime 通知 ─────────────────────────────────────────────────────
+  const notifiedTasksRef = useRef(new Set()); // 本日通知済みIDセット
+  useEffect(()=>{
+    if(!appSettings.notifyTasks) return;
+    const check=()=>{
+      const now=new Date();
+      const hhmm=`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+      const todayStr=today();
+      tasks.forEach(t=>{
+        if(t.completed||t.archived) return;
+        if(t.deadline!==todayStr) return;
+        if(!t.goalTime||t.goalTime!==hhmm) return;
+        const key=`${t.id}-${todayStr}-${hhmm}`;
+        if(notifiedTasksRef.current.has(key)) return;
+        notifiedTasksRef.current.add(key);
+        notify(`⏰ ${t.title}`,t.deadline===todayStr?"今日の予定時刻です":"",`task-${t.id}`);
+      });
+    };
+    check(); // 初回即時チェック
+    const id=setInterval(check,60000); // 毎分チェック
+    return()=>clearInterval(id);
+  },[tasks,appSettings.notifyTasks]);
+
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(()=>{
@@ -2131,6 +2192,56 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sb
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* 通知設定 */}
+      <div style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:14,padding:24,marginBottom:20}}>
+        <div style={{fontSize:11,fontWeight:700,color:T.textSec,letterSpacing:.5,textTransform:"uppercase",marginBottom:16}}>通知</div>
+        {(()=>{
+          const perm="Notification" in window?Notification.permission:"unsupported";
+          const permLabel={granted:"✅ 許可済み",denied:"❌ ブロック中",default:"⚠️ 未設定",unsupported:"このブラウザは非対応"}[perm];
+          const permColor={granted:T.mint,denied:T.peach,default:T.amber,unsupported:T.textMuted}[perm];
+          return(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,paddingBottom:12,borderBottom:`1px solid ${T.borderLight}`}}>
+              <span style={{fontSize:13,color:T.textSec}}>通知の許可</span>
+              <div style={{display:"flex",alignItems:"center",gap:10}}>
+                <span style={{fontSize:12,color:permColor,fontWeight:600}}>{permLabel}</span>
+                {perm==="default"&&(
+                  <button onClick={()=>requestNotifyPermission().then(()=>setAppSettings(a=>({...a})))}
+                    style={{background:T.blue,border:"none",borderRadius:7,padding:"5px 14px",color:"#fff",fontSize:12,cursor:"pointer",fontWeight:600}}>
+                    許可する
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+          <div>
+            <div style={{fontSize:13,color:T.text,fontWeight:600}}>🍅 ポモドーロ完了通知</div>
+            <div style={{fontSize:11,color:T.textMuted,marginTop:2}}>セッション・休憩の切り替え時に通知</div>
+          </div>
+          <button onClick={()=>setAppSettings(a=>({...a,notifyPomo:!a.notifyPomo}))}
+            style={{width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",flexShrink:0,
+              background:appSettings.notifyPomo?T.mint:T.borderLight,position:"relative",transition:"background .2s"}}>
+            <div style={{position:"absolute",top:3,left:appSettings.notifyPomo?22:3,
+              width:18,height:18,borderRadius:"50%",background:"#fff",
+              boxShadow:"0 1px 3px rgba(0,0,0,.2)",transition:"left .2s"}}/>
+          </button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:13,color:T.text,fontWeight:600}}>⏰ タスク時刻通知</div>
+            <div style={{fontSize:11,color:T.textMuted,marginTop:2}}>Goal Time に合わせて通知（今日・未完了のみ）</div>
+          </div>
+          <button onClick={()=>setAppSettings(a=>({...a,notifyTasks:!a.notifyTasks}))}
+            style={{width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",flexShrink:0,
+              background:appSettings.notifyTasks?T.mint:T.borderLight,position:"relative",transition:"background .2s"}}>
+            <div style={{position:"absolute",top:3,left:appSettings.notifyTasks?22:3,
+              width:18,height:18,borderRadius:"50%",background:"#fff",
+              boxShadow:"0 1px 3px rgba(0,0,0,.2)",transition:"left .2s"}}/>
+          </button>
         </div>
       </div>
 
