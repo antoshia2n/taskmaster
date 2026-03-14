@@ -228,9 +228,10 @@ function _pdEnd(e){
   const below=document.elementFromPoint(cx,cy);
   const target=below?.closest("[data-drop-id]");
   const dropId=target?.dataset.dropId;
-  if(dropId&&dragState.data){
-    dragState.onDrop?.(dragState.data,dropId);
-    if(navigator.vibrate)navigator.vibrate(14);
+  if(dragState.data&&dragState.onDrop){
+    // below も渡す（グループドラッグは data-drop-group を自分で辿る）
+    dragState.onDrop(dragState.data,dropId,below);
+    if(dropId&&navigator.vibrate)navigator.vibrate(14);
   }
   dragState.data=null; dragState.onDrop=null; dragState.sourceEl=null;
 }
@@ -854,8 +855,13 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
     startPointerDrag(
       _pendingPE,
       {__type:"group",...group},
-      (draggedGrp,dropId)=>{
-        handleGroupDrop({preventDefault:()=>{}},dropId,draggedGrp);
+      (draggedGrp,dropId,dropEl)=>{
+        // タスクカード上にドロップした場合も、外側の data-drop-group からグループIDを拾う
+        const groupEl=dropEl?.closest?.("[data-drop-group]");
+        const targetGroupId=groupEl?.dataset?.dropGroup;
+        if(targetGroupId&&targetGroupId!=="ungrouped"&&targetGroupId!==draggedGrp.id){
+          handleGroupDrop({preventDefault:()=>{},stopPropagation:()=>{}},targetGroupId,draggedGrp);
+        }
         setDragGroup(null);
       },
       ()=>setDragGroup(null)
@@ -1069,7 +1075,8 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
   const addComposing=useRef(false);
 
   return(
-    <div style={{marginBottom:24,opacity:isGroupDragOver?.7:1,transition:"opacity .15s"}}
+    <div data-drop-group={group.id||"ungrouped"}
+      style={{marginBottom:24,opacity:isGroupDragOver?.7:1,transition:"opacity .15s"}}
       onDragOver={e=>{onTaskDO(e,group.id);onGroupDO(e,group.id);}}
       onDrop={e=>{onTaskDrop(e,group.id);onGroupDrop(e,group.id);}}>
 
