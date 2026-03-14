@@ -174,7 +174,9 @@ const dragState = {
 
 function startPointerDrag(e, data, onDrop) {
   if(!e)return;
-  const el = e.currentTarget?.closest?.(".tr,.pg-card") || e.currentTarget || e.target;
+  // data-drag-root 属性があればそれを優先、なければ近くのカード系要素を探す
+  const root = e.currentTarget?.closest?.("[data-drag-root]");
+  const el = root || e.currentTarget?.closest?.(".tr,.pg-card,.drag-row") || e.currentTarget || e.target;
   if(!el)return;
   const rect = el.getBoundingClientRect();
   const cx = e.clientX ?? 0;
@@ -1071,13 +1073,18 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
       onDrop={e=>{onTaskDrop(e,group.id);onGroupDrop(e,group.id);}}>
 
       {/* Group header */}
-      <div data-drop-id={group.id}
-        style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"4px 4px",cursor:"default"}}>
+      <div data-drop-id={group.id} data-drag-root={group.id||undefined}
+        style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,padding:"4px 4px",cursor:"default",userSelect:"none"}}>
         {group.id&&(
           <div data-grip="true"
-            onPointerDown={e=>{e.stopPropagation();_pendingPE=e;onGroupDS(group);}}
-            style={{display:"flex",alignItems:"center",padding:"4px 2px",cursor:"grab",touchAction:"none",flexShrink:0}}>
-            <GripVertical size={13} color={T.textMuted} style={{opacity:.5}}/>
+            onPointerDown={e=>{
+              e.preventDefault(); // テキスト選択ドラッグを防ぐ
+              e.stopPropagation();
+              _pendingPE=e;
+              onGroupDS(group);
+            }}
+            style={{display:"flex",alignItems:"center",padding:"6px 4px",cursor:"grab",touchAction:"none",flexShrink:0,userSelect:"none"}}>
+            <GripVertical size={14} color={T.textMuted} style={{opacity:.55}}/>
           </div>
         )}
         <button onClick={()=>setColl(c=>!c)} style={{background:"none",border:"none",color:T.textMuted,display:"flex",alignItems:"center",padding:2,borderRadius:4,cursor:"pointer"}}>
@@ -1225,6 +1232,7 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
         <div
           data-grip="true"
           onPointerDown={e=>{
+            e.preventDefault(); // テキスト選択ドラッグを防ぐ
             e.stopPropagation();
             _pendingPE=e;
             onDS(task);
@@ -1549,6 +1557,7 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
     return(
       <div style={{marginLeft:depth*20,marginBottom:8}}>
         <div data-drop-id={depth===0?proj.id:undefined}
+          data-drag-root={depth===0?proj.id:undefined}
           onDragOver={depth===0?e=>e.preventDefault():undefined}
           onDrop={depth===0?e=>handleProjDrop(e,proj.id):undefined}
           style={{background:T.bgCard,border:`1.5px solid ${isDragOver?proj.color||T.blue:T.border}`,borderRadius:14,overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,.04)",transition:"border-color .15s"}}>
@@ -1556,7 +1565,7 @@ function ProjectView({projects,projectGroups,tasks,setProjects,setProjectGroups,
           <div style={{display:"flex",alignItems:"center",gap:10,padding:"14px 18px"}}>
             {depth===0&&(
               <div data-grip="true"
-                onPointerDown={e=>{e.stopPropagation();_pendingPE=e;handleProjDS(e,proj);}}
+                onPointerDown={e=>{e.preventDefault();e.stopPropagation();_pendingPE=e;handleProjDS(e,proj);}}
                 style={{display:"flex",alignItems:"center",padding:"4px 8px 4px 4px",cursor:"grab",touchAction:"none",flexShrink:0}}>
                 <GripVertical size={14} color={T.textMuted} style={{opacity:.45}}/>
               </div>
