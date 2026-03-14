@@ -855,19 +855,20 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
       _pendingPE,
       {__type:"group",...group},
       (draggedGrp,dropId)=>{
+        handleGroupDrop({preventDefault:()=>{}},dropId,draggedGrp);
         setDragGroup(null);
-        handleGroupDrop({preventDefault:()=>{}},dropId);
       },
       ()=>setDragGroup(null)
     );
   };
   const handleGroupDO=(e,id)=>{if(dragGroup){e.preventDefault();e.stopPropagation();setDragOverGroupTarget(id);}};
-  const handleGroupDrop=(e,targetId)=>{
+  const handleGroupDrop=(e,targetId,overrideGroup)=>{
     e.preventDefault();e.stopPropagation();
-    if(dragGroup&&dragGroup.id!==targetId){
+    const grp=overrideGroup||dragGroup; // Pointer dragはoverride、HTML5はstate参照
+    if(grp&&grp.id!==targetId){
       setGroups(gs=>{
         const s=[...gs].sort((a,b)=>a.order-b.order);
-        const fi=s.findIndex(g=>g.id===dragGroup.id),ti=s.findIndex(g=>g.id===targetId);
+        const fi=s.findIndex(g=>g.id===grp.id),ti=s.findIndex(g=>g.id===targetId);
         if(fi<0||ti<0)return gs;
         const m=s.splice(fi,1)[0];s.splice(ti,0,m);
         return s.map((g,i)=>({...g,order:i}));
