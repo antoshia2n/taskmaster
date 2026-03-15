@@ -166,6 +166,194 @@ async function requestNotifyPermission(){
 }
 
 
+// ── Ambient Sound System ─────────────────────────────────────────────────────
+// base64 スロット：embed_audio.py で実際の音源データに置き換える
+const AMBIENT_B64 = {
+  white: "", // ホワイトノイズ（Web Audioフォールバック使用）
+  rain:  "", // 雨（例: rain_loop.mp3 のbase64）
+  waves: "", // 波（例: waves_loop.mp3 のbase64）
+  fire:  "", // 焚き火（例: fire_loop.mp3 のbase64）
+};
+
+const ambientSounds = {
+  none:  { label:"OFF",         icon:"🔇" },
+  white: { label:"ホワイトノイズ", icon:"📻" },
+  rain:  { label:"雨",           icon:"🌧️" },
+  waves: { label:"波",           icon:"🌊" },
+  fire:  { label:"焚き火",        icon:"🔥" },
+};
+
+class AmbientPlayer {
+  constructor(){
+    this.audioEl = null;  // HTML5 Audio（base64録音）
+    this.ctx     = null;  // Web Audio（合成フォールバック）
+    this.nodes   = [];
+    this.gainNode = null;
+    this.volume  = 0.4;
+    this.current = "none";
+  }
+
+  // ── Web Audio フォールバック ─────────────────────────────
+  _ctx(){ if(!this.ctx) this.ctx=new(window.AudioContext||window.webkitAudioContext)(); return this.ctx; }
+
+  _stopSynth(){
+    this.nodes.forEach(n=>{try{n.stop?.();n.disconnect?.();}catch(e){}});
+    this.nodes=[];
+    clearTimeout(this._crackleTimer);
+  }
+
+  _pink(sec=3){
+    // ピンクノイズ（1/f）: より自然な質感
+    const ctx=this._ctx(), sr=ctx.sampleRate;
+    const buf=ctx.createBuffer(1,sr*sec,sr);
+    const d=buf.getChannelData(0);
+    let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+    for(let i=0;i<d.length;i++){
+      const wh=Math.random()*2-1;
+      b0=0.99886*b0+wh*0.0555179; b1=0.99332*b1+wh*0.0750759;
+      b2=0.96900*b2+wh*0.1538520; b3=0.86650*b3+wh*0.3104856;
+      b4=0.55000*b4+wh*0.5329522; b5=-0.7616*b5-wh*0.0168980;
+      d[i]=(b0+b1+b2+b3+b4+b5+b6+wh*0.5362)*0.11;
+      b6=wh*0.115926;
+    }
+    const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true;
+    return src;
+  }
+
+  _master(vol){
+    const ctx=this._ctx(), g=ctx.createGain();
+    g.gain.value=vol??this.volume;
+    g.connect(ctx.destination);
+    this.gainNode=g; return g;
+  }
+
+  _playSynth(type){
+    const ctx=this._ctx(), m=this._master();
+    if(type==="white"){
+      const s=this._pink(); s.connect(m); s.start(); this.nodes=[s];
+    }
+    else if(type==="rain"){
+      // 3レイヤー：遠雨 + 近雨粒 + 水たまりのしぶき
+      const far=this._pink(4), near=this._pink(2), splash=this._pink(1);
+      const farF=ctx.createBiquadFilter(); farF.type="lowpass"; farF.frequency.value=800;
+      const nearF=ctx.createBiquadFilter(); nearF.type="bandpass"; nearF.frequency.value=3500; nearF.Q.value=0.8;
+      const splashF=ctx.createBiquadFilter(); splashF.type="highpass"; splashF.frequency.value=6000;
+      const farG=ctx.createGain(); farG.gain.value=0.6;
+      const nearG=ctx.createGain(); nearG.gain.value=0.5;
+      const splashG=ctx.createGain(); splashG.gain.value=0.25;
+      far.connect(farF); farF.connect(farG); farG.connect(m);
+      near.connect(nearF); nearF.connect(nearG); nearG.connect(m);
+      splash.connect(splashF); splashF.connect(splashG); splashG.connect(m);
+      // ランダムウォーク LFO（1/fゆらぎ）
+      const lfoRate=ctx.createOscillator(); lfoRate.frequency.value=0;
+      const lfoG2=ctx.createGain(); lfoG2.gain.value=0.08;
+      lfoRate.connect(lfoG2); lfoG2.connect(m.gain);
+      far.start(); near.start(); splash.start(); lfoRate.start();
+      this.nodes=[far,near,splash,lfoRate];
+    }
+    else if(type==="waves"){
+      // 2レイヤー：深海の低音 + 砕ける波頭
+      const deep=this._pink(6), surf=this._pink(3);
+      const deepF=ctx.createBiquadFilter(); deepF.type="lowpass"; deepF.frequency.value=300;
+      const surfF=ctx.createBiquadFilter(); surfF.type="bandpass"; surfF.frequency.value=900; surfF.Q.value=0.4;
+      const deepG=ctx.createGain(); deepG.gain.value=0.7;
+      const surfG=ctx.createGain(); surfG.gain.value=0.5;
+      deep.connect(deepF); deepF.connect(deepG); deepG.connect(m);
+      surf.connect(surfF); surfF.connect(surfG); surfG.connect(m);
+      // 波の満ち引き：非対称のゆっくりしたLFO
+      const lfo=ctx.createOscillator(); lfo.type="sine"; lfo.frequency.value=0.12;
+      const lfoG2=ctx.createGain(); lfoG2.gain.value=0.45;
+      lfo.connect(lfoG2); lfoG2.connect(m.gain);
+      // 小波のゆらぎ
+      const lfo2=ctx.createOscillator(); lfo2.type="sine"; lfo2.frequency.value=0.37;
+      const lfoG3=ctx.createGain(); lfoG3.gain.value=0.15;
+      lfo2.connect(lfoG3); lfoG3.connect(m.gain);
+      deep.start(); surf.start(); lfo.start(); lfo2.start();
+      this.nodes=[deep,surf,lfo,lfo2];
+    }
+    else if(type==="fire"){
+      // 3レイヤー：炭の低音 + 炎の中域 + パチパチ高音
+      const coal=this._pink(3), flame=this._pink(2), crk=this._pink(1);
+      const coalF=ctx.createBiquadFilter(); coalF.type="lowpass"; coalF.frequency.value=200;
+      const flameF=ctx.createBiquadFilter(); flameF.type="bandpass"; flameF.frequency.value=500; flameF.Q.value=0.6;
+      const crkF=ctx.createBiquadFilter(); crkF.type="highpass"; crkF.frequency.value=2000;
+      const coalG=ctx.createGain(); coalG.gain.value=0.7;
+      const flameG=ctx.createGain(); flameG.gain.value=0.55;
+      const crkG=ctx.createGain(); crkG.gain.value=0.2;
+      coal.connect(coalF); coalF.connect(coalG); coalG.connect(m);
+      flame.connect(flameF); flameF.connect(flameG); flameG.connect(m);
+      crk.connect(crkF); crkF.connect(crkG); crkG.connect(m);
+      // 炎のゆらぎ（複数周波数の合成でランダム感）
+      const lfo1=ctx.createOscillator(); lfo1.frequency.value=0.5;
+      const lfo2=ctx.createOscillator(); lfo2.frequency.value=1.3;
+      const lfo3=ctx.createOscillator(); lfo3.frequency.value=2.7;
+      const lg1=ctx.createGain(); lg1.gain.value=0.15;
+      const lg2=ctx.createGain(); lg2.gain.value=0.08;
+      const lg3=ctx.createGain(); lg3.gain.value=0.04;
+      lfo1.connect(lg1); lg1.connect(m.gain);
+      lfo2.connect(lg2); lg2.connect(m.gain);
+      lfo3.connect(lg3); lg3.connect(m.gain);
+      // ランダムなパチパチ
+      const crackle=()=>{
+        if(!this.ctx||this.nodes.length===0) return;
+        const g=ctx.createGain(); g.gain.setValueAtTime(0,ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0.4+Math.random()*0.3,ctx.currentTime+0.003);
+        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.04+Math.random()*0.06);
+        const os=ctx.createOscillator();
+        os.frequency.value=800+Math.random()*1600;
+        os.connect(g); g.connect(m); os.start(); os.stop(ctx.currentTime+0.12);
+        this._crackleTimer=setTimeout(crackle,300+Math.random()*1800);
+      };
+      coal.start(); flame.start(); crk.start();
+      lfo1.start(); lfo2.start(); lfo3.start();
+      crackle();
+      this.nodes=[coal,flame,crk,lfo1,lfo2,lfo3];
+    }
+  }
+
+  // ── HTML5 Audio（base64録音）──────────────────────────────
+  _stopAudio(){
+    if(this.audioEl){ this.audioEl.pause(); this.audioEl.src=""; this.audioEl=null; }
+  }
+
+  _playAudio(type){
+    const b64=AMBIENT_B64[type];
+    if(!b64) return false; // 未設定ならフォールバック
+    this._stopAudio();
+    this.audioEl=new Audio(b64);
+    this.audioEl.loop=true;
+    this.audioEl.volume=this.volume;
+    this.audioEl.play().catch(()=>{});
+    return true;
+  }
+
+  // ── 公開 API ─────────────────────────────────────────────
+  play(type,vol){
+    this._stopSynth(); this._stopAudio();
+    if(type==="none"){ this.current="none"; return; }
+    this.current=type;
+    if(vol!==undefined) this.volume=vol;
+    // base64データがあればHTML5 Audio、なければWeb Audio合成
+    if(!this._playAudio(type)) this._playSynth(type);
+  }
+
+  setVolume(v){
+    this.volume=v;
+    if(this.audioEl) this.audioEl.volume=v;
+    if(this.gainNode) this.gainNode.gain.setTargetAtTime(v,this._ctx().currentTime,0.05);
+  }
+
+  resume(){
+    if(this.ctx?.state==="suspended") this.ctx.resume();
+    if(this.audioEl?.paused) this.audioEl.play().catch(()=>{});
+  }
+
+  stop(){ this._stopSynth(); this._stopAudio(); this.current="none"; }
+}
+
+const _ambientPlayer = new AmbientPlayer();
+
+
 // ── Pointer Drag System ───────────────────────────────────────────────────────
 const dragState = {
   active:false, startX:0, startY:0,
@@ -401,6 +589,15 @@ export default function App() {
   const resetPom=()=>setPomS(s=>({...s,active:false,startedAt:null,pausedAt:null}));
 
   const [confirm, setConfirm]=useState(null);
+  const [ambientType,setAmbientType]=useState("none");
+  const [ambientVol,setAmbientVol]=useState(0.4);
+  const setAmbient=(type,vol)=>{
+    const v=vol??ambientVol;
+    setAmbientType(type); if(vol!==undefined) setAmbientVol(v);
+    _ambientPlayer.resume();
+    _ambientPlayer.play(type,v);
+  };
+  const setAmbientVolume=(v)=>{ setAmbientVol(v); _ambientPlayer.setVolume(v); };
   const [searchQ,setSearchQ]=useState("");
   const [editTask,setEditTask]=useState(null);
   const [editProj,setEditProj]=useState(null);
@@ -539,7 +736,7 @@ export default function App() {
       <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom}/>
+        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientType={ambientType} ambientVol={ambientVol} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
           <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
@@ -699,7 +896,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
 }
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
-function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset}){
+function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientType,ambientVol,onAmbient,onAmbientVol}){
   // 表示用tick（500msごとに再レンダー）
   const [,setTick]=useState(0);
   useEffect(()=>{
@@ -773,6 +970,24 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset}){
           <div key={i} style={{width:8,height:8,borderRadius:"50%",background:i<(session%pomo.sessionsBeforeLong)?accent:T.borderLight,transition:"background .3s",boxShadow:i<(session%pomo.sessionsBeforeLong)?`0 0 6px ${accent}70`:undefined}}/>
         ))}
       </div>
+
+      {/* 🎵 Ambient sound */}
+      <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:8,flexShrink:0}}>
+        {Object.entries(ambientSounds).map(([key,s])=>(
+          <button key={key} onClick={()=>onAmbient(key)} title={s.label}
+            style={{background:ambientType===key?accent+"22":"transparent",
+              border:`1.5px solid ${ambientType===key?accent:T.borderLight}`,
+              borderRadius:7,padding:"4px 7px",fontSize:14,cursor:"pointer",
+              transition:"all .15s",lineHeight:1}}>
+            {s.icon}
+          </button>
+        ))}
+        {ambientType!=="none"&&(
+          <input type="range" min="0" max="1" step="0.05"
+            value={ambientVol} onChange={e=>onAmbientVol(parseFloat(e.target.value))}
+            style={{width:60,accentColor:accent,cursor:"pointer"}} title="音量"/>
+        )}
+      </div>
     </div>
   );
 }
@@ -802,7 +1017,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
     if(!ntt.trim())return;
     const dl=view==="today"?today():view==="tomorrow"?tomorrow():today();
     setTasks(ts=>[...ts,{id:uid(),title:ntt.trim(),status:"todo",priority:"medium",deadline:dl,goalTime:"",repeat:"",projectId:null,groupId:gid,subtasks:[],notes:"",links:[],completed:false,archived:false,order:ts.length}]);
-    setNtt("");setNtg(null);
+    setNtt(""); // フォームは開いたまま（Escapeで閉じる）→ 画面スクロールしない
   };
   const addG=()=>{
     if(!ngn.trim())return;
