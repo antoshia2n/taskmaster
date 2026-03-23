@@ -123,7 +123,7 @@ const DEF_PROJECTS=[
   {id:"p2",title:"フロントエンド実装",status:"inprogress",priority:"high",startDate:"2025-01-15",endDate:"2025-03-15",parentId:"p1",notes:"",links:[],color:T.lav,order:1,expanded:false},
 ];
 const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBeforeLong:4};
-const DEF_SETTINGS={uiScale:"medium",theme:"auto",notifyPomo:true,notifyTasks:true};
+const DEF_SETTINGS={uiScale:"medium",theme:"auto",notifyPomo:true,notifyTasks:true,ambientWork:"none",ambientBreak:"none",ambientVol:0.4};
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 async function localLoad(key,fb){try{const r=localStorage.getItem(key);return r?JSON.parse(r):fb;}catch(e){return fb;}}
@@ -531,6 +531,14 @@ export default function App() {
               else
                 notify("⏰ 休憩終了","次のセッションを始めましょう。","pomo-break");
             }
+            // モードに応じた ambient 自動切り替え
+            const nextAmbient=nm==="work"
+              ?(appSettings.ambientWork||"none")
+              :(appSettings.ambientBreak||"none");
+            setTimeout(()=>{
+              setAmbientType(nextAmbient);
+              _ambientPlayer.play(nextAmbient,appSettings.ambientVol??0.4);
+            },0);
             return{...s,mode:nm,session:ns,todayCount:newCount,lastCountDate:today(),startedAt:Date.now()};
           }
           return s; // elapsedはstartedAtから毎回算出するのでstateに保存不要
@@ -542,9 +550,15 @@ export default function App() {
 
   const startPom=(id=null)=>{
     setPomS(s=>{
-      if(s.active&&id&&s.linkedId===id) return s; // 同じタスク再押し→何もしない
-      if(s.active&&id&&s.linkedId!==id) return{...s,linkedId:id}; // 別タスク→linkedId切替のみ
+      if(s.active&&id&&s.linkedId===id) return s;
+      if(s.active&&id&&s.linkedId!==id) return{...s,linkedId:id};
       beep(660,0.2);
+      // 集中開始時に ambientWork を自動再生
+      const workAmbient=appSettings.ambientWork||"none";
+      setTimeout(()=>{
+        setAmbientType(workAmbient);
+        _ambientPlayer.play(workAmbient,appSettings.ambientVol??0.4);
+      },0);
       return{...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now(),pausedAt:null};
     });
   };
@@ -568,14 +582,24 @@ export default function App() {
   const resetPom=()=>setPomS(s=>({...s,active:false,startedAt:null,pausedAt:null}));
 
   const [confirm, setConfirm]=useState(null);
+  // ambient は appSettings で管理（保存・Supabase同期される）
+  const ambientWork = appSettings.ambientWork||"none";
+  const ambientBreak = appSettings.ambientBreak||"none";
+  const ambientVol = appSettings.ambientVol??0.4;
+  // 現在再生中の音（手動変更も反映）
   const [ambientType,setAmbientType]=useState("none");
-  const [ambientVol,setAmbientVol]=useState(0.4);
-  const setAmbient=(type,vol)=>{
+  const setAmbient=(type,vol,saveAs)=>{
+    // saveAs: "work" | "break" | undefined（一時的な変更）
     const v=vol??ambientVol;
-    setAmbientType(type); if(vol!==undefined) setAmbientVol(v);
+    setAmbientType(type);
     _ambientPlayer.play(type,v);
+    if(saveAs==="work") setAppSettings(a=>({...a,ambientWork:type}));
+    else if(saveAs==="break") setAppSettings(a=>({...a,ambientBreak:type}));
   };
-  const setAmbientVolume=(v)=>{ setAmbientVol(v); _ambientPlayer.setVolume(v); };
+  const setAmbientVolume=(v)=>{
+    setAppSettings(a=>({...a,ambientVol:v}));
+    _ambientPlayer.setVolume(v);
+  };
   const [searchQ,setSearchQ]=useState("");
   const [editTask,setEditTask]=useState(null);
   const [editProj,setEditProj]=useState(null);
@@ -714,7 +738,7 @@ export default function App() {
       <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientType={ambientType} ambientVol={ambientVol} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
+        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientType={ambientType} ambientVol={ambientVol} ambientWork={ambientWork} ambientBreak={ambientBreak} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
           <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
@@ -874,7 +898,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
 }
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
-function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientType,ambientVol,onAmbient,onAmbientVol}){
+function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientType,ambientVol,ambientWork,ambientBreak,onAmbient,onAmbientVol}){
   // 表示用tick（500msごとに再レンダー）
   const [,setTick]=useState(0);
   useEffect(()=>{
@@ -950,20 +974,39 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientT
       </div>
 
       {/* 🎵 Ambient sound */}
-      <div style={{display:"flex",alignItems:"center",gap:5,marginLeft:8,flexShrink:0}}>
-        {Object.entries(ambientSounds).map(([key,s])=>(
-          <button key={key} onClick={()=>onAmbient(key)} title={s.label}
-            style={{background:ambientType===key?accent+"22":"transparent",
-              border:`1.5px solid ${ambientType===key?accent:T.borderLight}`,
-              borderRadius:7,padding:"4px 7px",fontSize:14,cursor:"pointer",
-              transition:"all .15s",lineHeight:1}}>
-            {s.icon}
-          </button>
-        ))}
-        {ambientType!=="none"&&(
+      <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,flexShrink:0}}>
+        <div style={{display:"flex",flexDirection:"column",gap:3}}>
+          {/* 集中中ラベル */}
+          <div style={{display:"flex",alignItems:"center",gap:3}}>
+            <span style={{fontSize:9,color:T.blue,fontWeight:700,letterSpacing:.3,minWidth:28}}>集中</span>
+            {Object.entries(ambientSounds).map(([key,s])=>(
+              <button key={key} onClick={()=>onAmbient(key,"work")} title={s.label+"（集中）"}
+                style={{background:ambientWork===key?T.blue+"33":"transparent",
+                  border:`1px solid ${ambientWork===key?T.blue:T.borderLight}`,
+                  borderRadius:5,padding:"2px 5px",fontSize:12,cursor:"pointer",lineHeight:1,
+                  opacity:mode!=="work"?.6:1}}>
+                {s.icon}
+              </button>
+            ))}
+          </div>
+          {/* 休憩中ラベル */}
+          <div style={{display:"flex",alignItems:"center",gap:3}}>
+            <span style={{fontSize:9,color:T.mint,fontWeight:700,letterSpacing:.3,minWidth:28}}>休憩</span>
+            {Object.entries(ambientSounds).map(([key,s])=>(
+              <button key={key} onClick={()=>onAmbient(key,"break")} title={s.label+"（休憩）"}
+                style={{background:ambientBreak===key?T.mint+"33":"transparent",
+                  border:`1px solid ${ambientBreak===key?T.mint:T.borderLight}`,
+                  borderRadius:5,padding:"2px 5px",fontSize:12,cursor:"pointer",lineHeight:1,
+                  opacity:mode==="work"?.6:1}}>
+                {s.icon}
+              </button>
+            ))}
+          </div>
+        </div>
+        {(ambientWork!=="none"||ambientBreak!=="none")&&(
           <input type="range" min="0" max="1" step="0.05"
             value={ambientVol} onChange={e=>onAmbientVol(parseFloat(e.target.value))}
-            style={{width:60,accentColor:accent,cursor:"pointer"}} title="音量"/>
+            style={{width:56,accentColor:accent,cursor:"pointer"}} title="音量"/>
         )}
       </div>
     </div>
