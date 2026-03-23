@@ -319,7 +319,7 @@ class AmbientPlayer {
   _playAudio(type){
     // まず base64 データを確認、なければ public/ のパスを試みる
     const b64=AMBIENT_B64[type];
-    const src=b64||`/audio/${type}.mp3`;
+    const src=b64||`/${type}.mp3`;
     this._stopAudio();
     this.audioEl=new Audio(src);
     this.audioEl.loop=true;
