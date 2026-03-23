@@ -185,162 +185,136 @@ const ambientSounds = {
 
 class AmbientPlayer {
   constructor(){
-    this.audioEl = null;  // HTML5 Audio（base64録音）
-    this.ctx     = null;  // Web Audio（合成フォールバック）
-    this.nodes   = [];
-    this.gainNode = null;
-    this.volume  = 0.4;
-    this.current = "none";
+    this.audioEl=null;
+    this.ctx=null;
+    this.nodes=[];
+    this.gainNode=null;
+    this.volume=0.35;
+    this.current="none";
+    this._crackleTimer=null;
   }
 
-  // ── Web Audio フォールバック ─────────────────────────────
-  _ctx(){ if(!this.ctx) this.ctx=new(window.AudioContext||window.webkitAudioContext)(); return this.ctx; }
-
+  // ── 停止 ─────────────────────────────────────────────────
+  _stopAudio(){
+    if(this.audioEl){
+      this.audioEl.onerror=null;
+      this.audioEl.pause();
+      this.audioEl.src="";
+      this.audioEl=null;
+    }
+  }
   _stopSynth(){
+    clearTimeout(this._crackleTimer);
     this.nodes.forEach(n=>{try{n.stop?.();n.disconnect?.();}catch(e){}});
     this.nodes=[];
-    clearTimeout(this._crackleTimer);
+    if(this.gainNode){try{this.gainNode.disconnect();}catch(e){} this.gainNode=null;}
   }
+  stopAll(){ this._stopSynth(); this._stopAudio(); }
 
+  // ── Web Audio ────────────────────────────────────────────
+  _ctx(){
+    if(!this.ctx) this.ctx=new(window.AudioContext||window.webkitAudioContext)();
+    if(this.ctx.state==="suspended") this.ctx.resume();
+    return this.ctx;
+  }
   _pink(sec=3){
-    // ピンクノイズ（1/f）: より自然な質感
-    const ctx=this._ctx(), sr=ctx.sampleRate;
-    const buf=ctx.createBuffer(1,sr*sec,sr);
-    const d=buf.getChannelData(0);
+    const ctx=this._ctx(),sr=ctx.sampleRate;
+    const buf=ctx.createBuffer(1,sr*sec,sr),d=buf.getChannelData(0);
     let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
     for(let i=0;i<d.length;i++){
-      const wh=Math.random()*2-1;
-      b0=0.99886*b0+wh*0.0555179; b1=0.99332*b1+wh*0.0750759;
-      b2=0.96900*b2+wh*0.1538520; b3=0.86650*b3+wh*0.3104856;
-      b4=0.55000*b4+wh*0.5329522; b5=-0.7616*b5-wh*0.0168980;
-      d[i]=(b0+b1+b2+b3+b4+b5+b6+wh*0.5362)*0.11;
-      b6=wh*0.115926;
+      const w=Math.random()*2-1;
+      b0=0.99886*b0+w*0.0555179;b1=0.99332*b1+w*0.0750759;
+      b2=0.96900*b2+w*0.1538520;b3=0.86650*b3+w*0.3104856;
+      b4=0.55000*b4+w*0.5329522;b5=-0.7616*b5-w*0.0168980;
+      d[i]=(b0+b1+b2+b3+b4+b5+b6+w*0.5362)*0.11;b6=w*0.115926;
     }
-    const src=ctx.createBufferSource(); src.buffer=buf; src.loop=true;
-    return src;
+    const s=ctx.createBufferSource();s.buffer=buf;s.loop=true;return s;
   }
-
-  _master(vol){
-    const ctx=this._ctx(), g=ctx.createGain();
-    g.gain.value=vol??this.volume;
+  _master(){
+    const ctx=this._ctx(),g=ctx.createGain();
+    g.gain.value=this.volume;
     g.connect(ctx.destination);
-    this.gainNode=g; return g;
+    this.gainNode=g;return g;
   }
-
   _playSynth(type){
-    const ctx=this._ctx(), m=this._master();
+    const ctx=this._ctx(),m=this._master();
     if(type==="white"){
-      const s=this._pink(); s.connect(m); s.start(); this.nodes=[s];
-    }
-    else if(type==="rain"){
-      // 3レイヤー：遠雨 + 近雨粒 + 水たまりのしぶき
-      const far=this._pink(4), near=this._pink(2), splash=this._pink(1);
-      const farF=ctx.createBiquadFilter(); farF.type="lowpass"; farF.frequency.value=800;
-      const nearF=ctx.createBiquadFilter(); nearF.type="bandpass"; nearF.frequency.value=3500; nearF.Q.value=0.8;
-      const splashF=ctx.createBiquadFilter(); splashF.type="highpass"; splashF.frequency.value=6000;
-      const farG=ctx.createGain(); farG.gain.value=0.6;
-      const nearG=ctx.createGain(); nearG.gain.value=0.5;
-      const splashG=ctx.createGain(); splashG.gain.value=0.25;
-      far.connect(farF); farF.connect(farG); farG.connect(m);
-      near.connect(nearF); nearF.connect(nearG); nearG.connect(m);
-      splash.connect(splashF); splashF.connect(splashG); splashG.connect(m);
-      // ランダムウォーク LFO（1/fゆらぎ）
-      const lfoRate=ctx.createOscillator(); lfoRate.frequency.value=0;
-      const lfoG2=ctx.createGain(); lfoG2.gain.value=0.08;
-      lfoRate.connect(lfoG2); lfoG2.connect(m.gain);
-      far.start(); near.start(); splash.start(); lfoRate.start();
-      this.nodes=[far,near,splash,lfoRate];
-    }
-    else if(type==="waves"){
-      // 2レイヤー：深海の低音 + 砕ける波頭
-      const deep=this._pink(6), surf=this._pink(3);
-      const deepF=ctx.createBiquadFilter(); deepF.type="lowpass"; deepF.frequency.value=300;
-      const surfF=ctx.createBiquadFilter(); surfF.type="bandpass"; surfF.frequency.value=900; surfF.Q.value=0.4;
-      const deepG=ctx.createGain(); deepG.gain.value=0.7;
-      const surfG=ctx.createGain(); surfG.gain.value=0.5;
-      deep.connect(deepF); deepF.connect(deepG); deepG.connect(m);
-      surf.connect(surfF); surfF.connect(surfG); surfG.connect(m);
-      // 波の満ち引き：非対称のゆっくりしたLFO
-      const lfo=ctx.createOscillator(); lfo.type="sine"; lfo.frequency.value=0.12;
-      const lfoG2=ctx.createGain(); lfoG2.gain.value=0.45;
-      lfo.connect(lfoG2); lfoG2.connect(m.gain);
-      // 小波のゆらぎ
-      const lfo2=ctx.createOscillator(); lfo2.type="sine"; lfo2.frequency.value=0.37;
-      const lfoG3=ctx.createGain(); lfoG3.gain.value=0.15;
-      lfo2.connect(lfoG3); lfoG3.connect(m.gain);
-      deep.start(); surf.start(); lfo.start(); lfo2.start();
-      this.nodes=[deep,surf,lfo,lfo2];
-    }
-    else if(type==="fire"){
-      // 3レイヤー：炭の低音 + 炎の中域 + パチパチ高音
-      const coal=this._pink(3), flame=this._pink(2), crk=this._pink(1);
-      const coalF=ctx.createBiquadFilter(); coalF.type="lowpass"; coalF.frequency.value=200;
-      const flameF=ctx.createBiquadFilter(); flameF.type="bandpass"; flameF.frequency.value=500; flameF.Q.value=0.6;
-      const crkF=ctx.createBiquadFilter(); crkF.type="highpass"; crkF.frequency.value=2000;
-      const coalG=ctx.createGain(); coalG.gain.value=0.7;
-      const flameG=ctx.createGain(); flameG.gain.value=0.55;
-      const crkG=ctx.createGain(); crkG.gain.value=0.2;
-      coal.connect(coalF); coalF.connect(coalG); coalG.connect(m);
-      flame.connect(flameF); flameF.connect(flameG); flameG.connect(m);
-      crk.connect(crkF); crkF.connect(crkG); crkG.connect(m);
-      // 炎のゆらぎ（複数周波数の合成でランダム感）
-      const lfo1=ctx.createOscillator(); lfo1.frequency.value=0.5;
-      const lfo2=ctx.createOscillator(); lfo2.frequency.value=1.3;
-      const lfo3=ctx.createOscillator(); lfo3.frequency.value=2.7;
-      const lg1=ctx.createGain(); lg1.gain.value=0.15;
-      const lg2=ctx.createGain(); lg2.gain.value=0.08;
-      const lg3=ctx.createGain(); lg3.gain.value=0.04;
-      lfo1.connect(lg1); lg1.connect(m.gain);
-      lfo2.connect(lg2); lg2.connect(m.gain);
-      lfo3.connect(lg3); lg3.connect(m.gain);
-      // ランダムなパチパチ
+      const s=this._pink();s.connect(m);s.start();this.nodes=[s];
+    } else if(type==="rain"){
+      const far=this._pink(4),near=this._pink(2),splash=this._pink(1);
+      const fF=ctx.createBiquadFilter();fF.type="lowpass";fF.frequency.value=800;
+      const nF=ctx.createBiquadFilter();nF.type="bandpass";nF.frequency.value=3500;nF.Q.value=0.8;
+      const sF=ctx.createBiquadFilter();sF.type="highpass";sF.frequency.value=6000;
+      const fG=ctx.createGain();fG.gain.value=0.6;
+      const nG=ctx.createGain();nG.gain.value=0.5;
+      const sG=ctx.createGain();sG.gain.value=0.25;
+      far.connect(fF);fF.connect(fG);fG.connect(m);
+      near.connect(nF);nF.connect(nG);nG.connect(m);
+      splash.connect(sF);sF.connect(sG);sG.connect(m);
+      far.start();near.start();splash.start();
+      this.nodes=[far,near,splash];
+    } else if(type==="waves"){
+      const deep=this._pink(6),surf=this._pink(3);
+      const dF=ctx.createBiquadFilter();dF.type="lowpass";dF.frequency.value=300;
+      const sF=ctx.createBiquadFilter();sF.type="bandpass";sF.frequency.value=900;sF.Q.value=0.4;
+      const dG=ctx.createGain();dG.gain.value=0.7;
+      const sG=ctx.createGain();sG.gain.value=0.5;
+      deep.connect(dF);dF.connect(dG);dG.connect(m);
+      surf.connect(sF);sF.connect(sG);sG.connect(m);
+      const lfo=ctx.createOscillator();lfo.type="sine";lfo.frequency.value=0.12;
+      const lg=ctx.createGain();lg.gain.value=0.4;
+      lfo.connect(lg);lg.connect(m.gain);
+      deep.start();surf.start();lfo.start();
+      this.nodes=[deep,surf,lfo];
+    } else if(type==="fire"){
+      const coal=this._pink(3),flame=this._pink(2);
+      const cF=ctx.createBiquadFilter();cF.type="lowpass";cF.frequency.value=200;
+      const fF=ctx.createBiquadFilter();fF.type="bandpass";fF.frequency.value=500;fF.Q.value=0.6;
+      const cG=ctx.createGain();cG.gain.value=0.7;
+      const fG=ctx.createGain();fG.gain.value=0.55;
+      coal.connect(cF);cF.connect(cG);cG.connect(m);
+      flame.connect(fF);fF.connect(fG);fG.connect(m);
+      const lfo=ctx.createOscillator();lfo.frequency.value=0.6;
+      const lg=ctx.createGain();lg.gain.value=0.18;
+      lfo.connect(lg);lg.connect(m.gain);
+      coal.start();flame.start();lfo.start();
       const crackle=()=>{
-        if(!this.ctx||this.nodes.length===0) return;
-        const g=ctx.createGain(); g.gain.setValueAtTime(0,ctx.currentTime);
-        g.gain.linearRampToValueAtTime(0.4+Math.random()*0.3,ctx.currentTime+0.003);
-        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.04+Math.random()*0.06);
-        const os=ctx.createOscillator();
-        os.frequency.value=800+Math.random()*1600;
-        os.connect(g); g.connect(m); os.start(); os.stop(ctx.currentTime+0.12);
-        this._crackleTimer=setTimeout(crackle,300+Math.random()*1800);
+        if(!this.gainNode)return;
+        const g=ctx.createGain();g.gain.setValueAtTime(0,ctx.currentTime);
+        g.gain.linearRampToValueAtTime(0.3+Math.random()*0.2,ctx.currentTime+0.003);
+        g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+0.05+Math.random()*0.05);
+        const os=ctx.createOscillator();os.frequency.value=900+Math.random()*1200;
+        os.connect(g);g.connect(m);os.start();os.stop(ctx.currentTime+0.1);
+        this._crackleTimer=setTimeout(crackle,400+Math.random()*1600);
       };
-      coal.start(); flame.start(); crk.start();
-      lfo1.start(); lfo2.start(); lfo3.start();
       crackle();
-      this.nodes=[coal,flame,crk,lfo1,lfo2,lfo3];
+      this.nodes=[coal,flame,lfo];
     }
-  }
-
-  // ── HTML5 Audio（base64録音）──────────────────────────────
-  _stopAudio(){
-    if(this.audioEl){ this.audioEl.pause(); this.audioEl.src=""; this.audioEl=null; }
-  }
-
-  _playAudio(type){
-    // まず base64 データを確認、なければ public/ のパスを試みる
-    const b64=AMBIENT_B64[type];
-    const src=b64||`/${type}.mp3`;
-    this._stopAudio();
-    this.audioEl=new Audio(src);
-    this.audioEl.loop=true;
-    this.audioEl.volume=this.volume;
-    // ロードエラー時は Web Audio 合成にフォールバック
-    this.audioEl.onerror=()=>{
-      this._stopAudio();
-      this._playSynth(type);
-    };
-    this.audioEl.play().catch(()=>{});
-    return true; // 常に HTML5 Audio を試みる
   }
 
   // ── 公開 API ─────────────────────────────────────────────
   play(type,vol){
-    this._stopSynth(); this._stopAudio();
-    if(type==="none"){ this.current="none"; return; }
+    // 必ず全停止してからスタート
+    this.stopAll();
+    if(type==="none"){this.current="none";return;}
     this.current=type;
     if(vol!==undefined) this.volume=vol;
-    // base64データがあればHTML5 Audio、なければWeb Audio合成
-    if(!this._playAudio(type)) this._playSynth(type);
+
+    const b64=AMBIENT_B64[type];
+    const src=b64||`/${type}.mp3`;
+
+    // HTML5 Audio（録音ファイル）を試みる
+    const el=new Audio();
+    el.loop=true;
+    el.volume=this.volume;
+    el.onerror=null; // フォールバックなし（二重再生を防ぐ）
+    this.audioEl=el;
+    el.src=src; // src設定はイベント登録後
+    el.play().catch(()=>{
+      // ファイルが見つからない場合のみ synth にフォールバック
+      this._stopAudio();
+      this._playSynth(type);
+    });
   }
 
   setVolume(v){
@@ -349,14 +323,13 @@ class AmbientPlayer {
     if(this.gainNode) this.gainNode.gain.setTargetAtTime(v,this._ctx().currentTime,0.05);
   }
 
-  resume(){
-    if(this.ctx?.state==="suspended") this.ctx.resume();
-    if(this.audioEl?.paused) this.audioEl.play().catch(()=>{});
+  pause(){
+    if(this.audioEl&&!this.audioEl.paused) this.audioEl.pause();
+    if(this.gainNode) this.gainNode.gain.setTargetAtTime(0,this._ctx().currentTime,0.1);
   }
 
-  stop(){ this._stopSynth(); this._stopAudio(); this.current="none"; }
+  stop(){ this.stopAll(); this.current="none"; }
 }
-
 const _ambientPlayer = new AmbientPlayer();
 
 
@@ -600,7 +573,6 @@ export default function App() {
   const setAmbient=(type,vol)=>{
     const v=vol??ambientVol;
     setAmbientType(type); if(vol!==undefined) setAmbientVol(v);
-    _ambientPlayer.resume();
     _ambientPlayer.play(type,v);
   };
   const setAmbientVolume=(v)=>{ setAmbientVol(v); _ambientPlayer.setVolume(v); };
