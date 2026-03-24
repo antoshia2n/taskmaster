@@ -588,9 +588,9 @@ export default function App() {
   const ambientVol = appSettings.ambientVol??0.4;
   // 現在再生中の音（手動変更も反映）
   const [ambientType,setAmbientType]=useState("none");
-  const setAmbient=(type,vol,saveAs)=>{
+  const setAmbient=(type,saveAs,vol)=>{
     // saveAs: "work" | "break" | undefined（一時的な変更）
-    const v=vol??ambientVol;
+    const v=(typeof vol==="number"?vol:null)??ambientVol;
     setAmbientType(type);
     _ambientPlayer.play(type,v);
     if(saveAs==="work") setAppSettings(a=>({...a,ambientWork:type}));
