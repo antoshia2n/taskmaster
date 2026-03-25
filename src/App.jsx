@@ -722,8 +722,9 @@ export default function App() {
   .main-pad{padding:12px 12px!important;}
   .tr{padding:11px 12px!important;min-height:52px;}
   .modal .fi{width:96%!important;max-height:92vh;overflow-y:auto;padding:20px!important;}
-  .pomobar{padding:6px 14px!important;}
+  .pomobar{padding:6px 10px!important;flex-wrap:wrap!important;gap:8px!important;}
   .pomobar .pomobar-title{display:none!important;}
+  .pomobar-ambient{order:10;width:100%;border-top:1px solid rgba(128,128,128,.15);padding-top:6px;margin-left:0!important;}
   .drop-target.touch-over{outline:2px solid var(--blue)!important;}
   /* Larger touch targets for small buttons */
   .lhbtn{min-height:36px;min-width:36px;}
@@ -738,7 +739,7 @@ export default function App() {
       <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientType={ambientType} ambientVol={ambientVol} ambientWork={ambientWork} ambientBreak={ambientBreak} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
+        <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientVol={ambientVol} ambientWork={ambientWork} ambientBreak={ambientBreak} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
           <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
@@ -898,7 +899,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
 }
 
 // ── Pomo Bar ──────────────────────────────────────────────────────────────────
-function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientType,ambientVol,ambientWork,ambientBreak,onAmbient,onAmbientVol}){
+function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientVol,ambientWork,ambientBreak,onAmbient,onAmbientVol}){
   // 表示用tick（500msごとに再レンダー）
   const [,setTick]=useState(0);
   useEffect(()=>{
@@ -920,7 +921,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientT
   const prog=elapsed/lim;
   const accent={work:T.blue,break:T.mint,longbreak:T.lav}[mode];
   const modeL={work:"Focus",break:"Break",longbreak:"Long break"}[mode];
-  const linkedTask=tasks.find(t=>t.id===linkedId);
+  const linkedTask=tasks.find(t=>t.id===linkedId&&!t.completed&&!t.archived);
   const r=16,circ=2*Math.PI*r;
   return(
     <div className="pomobar" style={{background:T.bgCard,borderBottom:`1.5px solid ${T.border}`,padding:"10px 32px",display:"flex",alignItems:"center",gap:18,flexShrink:0,boxShadow:"0 1px 6px rgba(0,0,0,.04)"}}>
@@ -962,7 +963,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientT
         <button className="lhbtn" onClick={onReset} style={{background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:8,padding:"7px 10px",color:T.textSec}}><RotateCcw size={13}/></button>
       </div>
       {linkedTask&&(
-        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",background:T.bg,borderRadius:8,border:`1.5px solid ${T.border}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 12px",background:T.bg,borderRadius:8,border:`1.5px solid ${T.border}`,maxWidth:200,overflow:"hidden"}}>
           <div style={{width:6,height:6,borderRadius:"50%",background:accent,flexShrink:0}}/>
           <span style={{fontSize:12,color:T.textSec,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{linkedTask.title}</span>
         </div>
@@ -974,7 +975,7 @@ function PomoBar({ps,pomo,tasks,onStart,onPause,onResume,onSkip,onReset,ambientT
       </div>
 
       {/* 🎵 Ambient sound */}
-      <div style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,flexShrink:0}}>
+      <div className="pomobar-ambient" style={{display:"flex",alignItems:"center",gap:8,marginLeft:8,flexShrink:0}}>
         <div style={{display:"flex",flexDirection:"column",gap:3}}>
           {/* 集中中ラベル */}
           <div style={{display:"flex",alignItems:"center",gap:3}}>
