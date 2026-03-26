@@ -1,4 +1,121 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
+import { getFirestore, doc, getDoc } from "firebase/firestore";
+
+const _fbConfig = {
+  apiKey: "AIzaSyDKj5rhN6wg0k0OhCmY8J1r_8_2WfeBfYA",
+  authDomain: "gen-lang-client-0371348401.firebaseapp.com",
+  projectId: "gen-lang-client-0371348401",
+  storageBucket: "gen-lang-client-0371348401.firebasestorage.app",
+  messagingSenderId: "36557223222",
+  appId: "1:36557223222:web:135a89fa5250e25af96f97",
+};
+const _PORTAL_URL = "https://authsync-36557223222.us-west1.run.app/";
+const _APP_ID     = "taskmaster";
+const _DB_ID      = "ai-studio-622b9a97-52df-425a-85c6-1a2670c54e0a";
+
+const _fbApp = initializeApp(_fbConfig);
+const _auth  = getAuth(_fbApp);
+const _db    = getFirestore(_fbApp, _DB_ID); // Named DB: 必ず第2引数を指定
+
+async function _checkAccess(uid) {
+  try {
+    const snap = await getDoc(doc(_db, "users", uid));
+    if (!snap.exists()) return false;
+    const d = snap.data();
+    return d.paymentStatus === "premium"
+        || (Array.isArray(d.allowedApps) && d.allowedApps.includes(_APP_ID));
+  } catch (e) {
+    console.error("Access check failed:", e);
+    return false;
+  }
+}
+
+function AuthGate({ children }) {
+  const [state, setState] = useState("loading");
+  const [user,  setUser]  = useState(null);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(_auth, async (u) => {
+      if (!u) { setState("login"); setUser(null); return; }
+      setUser(u);
+      setState("checking");
+      const ok = await _checkAccess(u.uid);
+      if (ok) { setState("ok"); }
+      else {
+        setState("denied");
+        setTimeout(() => { window.location.href = _PORTAL_URL; }, 3000);
+      }
+    });
+    return unsub;
+  }, []);
+
+  const login = async () => {
+    try { setState("loading"); await signInWithPopup(_auth, new GoogleAuthProvider()); }
+    catch (e) { setState("login"); }
+  };
+  const logout = () => signOut(_auth);
+
+  const overlay = {
+    position:"fixed",inset:0,display:"flex",flexDirection:"column",
+    alignItems:"center",justifyContent:"center",
+    background:"#12151E",color:"#E2E8F0",fontFamily:"system-ui,sans-serif",
+    gap:20,padding:32,zIndex:9999,
+  };
+  const card = {
+    background:"#1B2337",border:"1.5px solid #2D3A52",
+    borderRadius:16,padding:"40px 48px",maxWidth:380,width:"100%",
+    textAlign:"center",display:"flex",flexDirection:"column",gap:16,
+  };
+  const btn = (bg) => ({
+    background:bg||"#6BAED4",border:bg?"none":"1px solid #2D3A52",
+    borderRadius:10,padding:"12px 28px",
+    color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",
+  });
+
+  if (state==="loading"||state==="checking") return (
+    <div style={overlay}><div style={card}>
+      <div style={{fontSize:28}}>⏳</div>
+      <div style={{fontSize:15,color:"#94A3B8"}}>
+        {state==="checking"?"権限を確認中...":"読み込み中..."}
+      </div>
+    </div></div>
+  );
+
+  if (state==="login") return (
+    <div style={overlay}><div style={card}>
+      <div style={{fontSize:32,marginBottom:4}}>📋</div>
+      <div style={{fontSize:20,fontWeight:700}}>TaskMaster</div>
+      <div style={{fontSize:13,color:"#94A3B8",lineHeight:1.6}}>
+        ゆるつみあげラボのメンバー限定アプリです。<br/>
+        ポータルサイトと同じGoogleアカウントでログインしてください。
+      </div>
+      <button style={btn("#6BAED4")} onClick={login}>Googleでログイン</button>
+    </div></div>
+  );
+
+  if (state==="denied") return (
+    <div style={overlay}><div style={card}>
+      <div style={{fontSize:32}}>🔒</div>
+      <div style={{fontSize:18,fontWeight:700}}>アクセス権限がありません</div>
+      <div style={{fontSize:13,color:"#94A3B8",lineHeight:1.6}}>
+        {user&&user.email}<br/><br/>
+        このアプリはゆるつみあげラボのメンバー限定です。<br/>
+        3秒後にポータルサイトへ移動します...
+      </div>
+      <button style={btn("#D4886B")} onClick={()=>{window.location.href=_PORTAL_URL;}}>
+        今すぐポータルへ
+      </button>
+      <button style={{...btn(),...{background:"transparent",color:"#94A3B8"}}} onClick={logout}>
+        別のアカウントでログイン
+      </button>
+    </div></div>
+  );
+
+  return children;
+}
+
 import {
   ChevronRight, ChevronDown, Plus, Trash2, Archive, Timer, Clock,
   Play, Pause, SkipForward, Settings, Calendar,
@@ -412,7 +529,7 @@ if(typeof window!=="undefined"){
 
 
 // ── App ───────────────────────────────────────────────────────────────────────
-export default function App() {
+function AppInner() {
   const [tasks,    setTasksR]    = useState(DEF_TASKS);
   const [projects, setProjectsR] = useState(DEF_PROJECTS);
   const [projectGroups, setProjectGroupsR] = useState(DEF_PROJECT_GROUPS);
@@ -2540,4 +2657,8 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sb
       </div>
     </div>
   );
+}
+
+export default function App(){
+  return <AuthGate><AppInner/></AuthGate>;
 }
