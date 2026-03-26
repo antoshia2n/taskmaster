@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "firebase/auth";
-import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from "firebase/auth";
+import { getFirestore, doc, getDoc, setDoc } from "firebase/firestore";
 
 const _fbConfig = {
   apiKey: "AIzaSyDKj5rhN6wg0k0OhCmY8J1r_8_2WfeBfYA",
@@ -32,17 +32,37 @@ async function _checkAccess(uid) {
   }
 }
 
+// ── Firestore データ同期 ─────────────────────────────────────────────────────
+let _fsUid = null; // ログイン中UID（AuthGateがセット）
+
+async function _fsSave(key, val) {
+  if (!_fsUid) return;
+  try { await setDoc(doc(_db, "users", _fsUid, "app_data", key), { value: val }); }
+  catch (e) { console.error("Firestore save failed:", key, e); }
+}
+
+async function _fsLoad(uid) {
+  const keys = ["tasks","projects","groups","project_groups","pomo","settings"];
+  const snaps = await Promise.all(keys.map(k => getDoc(doc(_db, "users", uid, "app_data", k))));
+  const out = {};
+  snaps.forEach((s,i) => { if(s.exists()) out[keys[i]] = s.data().value; });
+  return out;
+}
+
 function AuthGate({ children }) {
   const [state, setState] = useState("loading");
   const [user,  setUser]  = useState(null);
 
   useEffect(() => {
+    // リダイレクト方式: ページ戻り時に結果を取得
+    getRedirectResult(_auth).catch(() => {});
+
     const unsub = onAuthStateChanged(_auth, async (u) => {
       if (!u) { setState("login"); setUser(null); return; }
       setUser(u);
       setState("checking");
       const ok = await _checkAccess(u.uid);
-      if (ok) { setState("ok"); }
+      if (ok) { _fsUid = u.uid; setState("ok"); }
       else {
         setState("denied");
         setTimeout(() => { window.location.href = _PORTAL_URL; }, 3000);
@@ -51,9 +71,10 @@ function AuthGate({ children }) {
     return unsub;
   }, []);
 
-  const login = async () => {
-    try { setState("loading"); await signInWithPopup(_auth, new GoogleAuthProvider()); }
-    catch (e) { setState("login"); }
+  const login = () => {
+    setState("loading");
+    // リダイレクト方式（ポップアップはブラウザにブロックされやすいため）
+    signInWithRedirect(_auth, new GoogleAuthProvider());
   };
   const logout = () => signOut(_auth);
 
@@ -544,12 +565,17 @@ function AppInner() {
   const sbRef = useRef(null);
 
   const sbTimers = useRef({});
+  const fsTimers = useRef({});
   const syncSB = useCallback((key,val) => {
+    // Firestore に書き込み（デバウンス800ms）
+    clearTimeout(fsTimers.current[key]);
+    fsTimers.current[key] = setTimeout(() => _fsSave(key, val), 800);
+    // Supabase にも書き込み（設定済みの場合）
     if(!sbRef.current)return;
     clearTimeout(sbTimers.current[key]);
     sbTimers.current[key]=setTimeout(async()=>{
       try{await sbRef.current.upsert("app_data",{key,value:val,updated_at:new Date().toISOString()});}
-      catch(e){setSbStatus("error");}
+      catch(e){}
     },800);
   },[]);
 
@@ -603,6 +629,25 @@ function AppInner() {
       const ps=await localLoad("tm_pomo_session",{todayCount:0,date:today()});
       if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount,lastCountDate:today()}));
       else setPomS(s=>({...s,todayCount:0,lastCountDate:today()})); // 新しい日はリセット
+      // Firestore からロード（ログイン済みの場合）
+      const currentUser = _auth.currentUser;
+      if (currentUser) {
+        _fsUid = currentUser.uid;
+        try {
+          const fsData = await _fsLoad(currentUser.uid);
+          if (fsData.tasks)         setTasksR(fsData.tasks.map(x=>({...x,links:normLinks(x.links)})));
+          if (fsData.projects)      setProjectsR(fsData.projects.map(x=>({...x,links:normLinks(x.links)})));
+          if (fsData.groups)        setGroupsR(fsData.groups);
+          if (fsData.project_groups)setProjectGroupsR(fsData.project_groups);
+          if (fsData.pomo)          setPomoR(fsData.pomo);
+          if (fsData.settings)      setAppSettingsR(fsData.settings);
+          // Firestoreが空ならlocalStorageのデータを初回アップロード
+          if (!fsData.tasks)         _fsSave("tasks", t);
+          if (!fsData.projects)      _fsSave("projects", p);
+          if (!fsData.groups)        _fsSave("groups", g);
+          if (!fsData.project_groups)_fsSave("project_groups", pg);
+        } catch(e) { console.error("Firestore load failed:", e); }
+      }
       if(sb.url&&sb.key)await connectSB(sb.url,sb.key);
       setReady(true);
       // 通知権限をリクエスト（まだ決定していない場合のみ）
@@ -2635,7 +2680,7 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sb
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
             <div style={{width:34,height:34,background:T.mintBg,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><Database size={16} color={T.mint}/></div>
-            <div><div style={{fontWeight:700,fontSize:14,color:T.text}}>Supabase Sync</div><div style={{fontSize:12,color:T.textMuted}}>Multi-device support</div></div>
+            <div><div style={{fontWeight:700,fontSize:14,color:T.text}}>データ同期</div><div style={{fontSize:12,color:T.textMuted}}>Googleアカウントで自動同期</div></div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 12px",background:`${sbI.c}14`,border:`1px solid ${sbI.c}30`,borderRadius:8}}>
             <div style={{width:7,height:7,borderRadius:"50%",background:sbI.c}}/>
