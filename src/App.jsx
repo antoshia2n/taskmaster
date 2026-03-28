@@ -699,7 +699,8 @@ function AppInner() {
               :(appSettings.ambientBreak||"none");
             setTimeout(()=>{
               setAmbientType(nextAmbient);
-              _ambientPlayer.play(nextAmbient,appSettings.ambientVol??0.4);
+              if(nextAmbient==="none") _ambientPlayer.stop();
+              else _ambientPlayer.play(nextAmbient,appSettings.ambientVol??0.4);
             },0);
             return{...s,mode:nm,session:ns,todayCount:newCount,lastCountDate:today(),startedAt:Date.now()};
           }
@@ -719,7 +720,8 @@ function AppInner() {
       const workAmbient=appSettings.ambientWork||"none";
       setTimeout(()=>{
         setAmbientType(workAmbient);
-        _ambientPlayer.play(workAmbient,appSettings.ambientVol??0.4);
+        if(workAmbient==="none") _ambientPlayer.stop();
+        else _ambientPlayer.play(workAmbient,appSettings.ambientVol??0.4);
       },0);
       return{...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now(),pausedAt:null};
     });
