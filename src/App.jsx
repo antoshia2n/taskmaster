@@ -968,6 +968,16 @@ function AppInner() {
           onStart={startPom} onPause={pausePom} onResume={resumePom}
           onSkip={skipPom} onReset={resetPom}
           onAmbient={setAmbient} onAmbientVol={setAmbientVolume}
+          onToggleSub={(sid)=>setTasks(ts=>ts.map(t=>
+            t.id===ps.linkedId
+              ?{...t,subtasks:t.subtasks.map(s=>s.id===sid?{...s,done:!s.done}:s)}
+              :t
+          ))}
+          onAddSub={(title)=>setTasks(ts=>ts.map(t=>
+            t.id===ps.linkedId
+              ?{...t,subtasks:[...(t.subtasks||[]),{id:uid(),title,done:false}]}
+              :t
+          ))}
           onComplete={()=>{
             if(ps.linkedId){
               setTasks(ts=>ts.map(t=>t.id===ps.linkedId
@@ -2488,9 +2498,10 @@ function GanttView({projects,projectGroups}){
 
 // ── Manual ────────────────────────────────────────────────────────────────────
 // ── Focus Mode Overlay ────────────────────────────────────────────────────────
-function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,ambientType,
+function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,
   onStart,onPause,onResume,onSkip,onReset,onAmbient,onAmbientVol,
-  onComplete,onClose}){
+  onComplete,onClose,onToggleSub,onAddSub}){
+
   const{active,mode,session,todayCount,linkedId,startedAt,pausedAt}=ps;
   const isPaused=!active&&!!pausedAt;
   const lim=(mode==="work"?pomo.workTime:mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
@@ -2501,10 +2512,13 @@ function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,ambie
   const sec=String(rem%60).padStart(2,"0");
   const prog=elapsed/lim;
   const accent={work:T.blue,break:T.mint,longbreak:T.lav}[mode];
-  const modeL={work:"集中",break:"休憩",longbreak:"長い休憩"}[mode];
-  const r=64; const circ=2*Math.PI*r;
+  const modeLabel={work:"Focus",break:"Break",longbreak:"Long Break"}[mode];
+  const r=72; const circ=2*Math.PI*r;
 
-  // tick
+  const[newSub,setNewSub]=useState("");
+  const subInputRef=useRef(null);
+  const subComposing=useRef(false);
+
   const[,setTick]=useState(0);
   useEffect(()=>{
     if(!ps.active) return;
@@ -2512,7 +2526,6 @@ function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,ambie
     return()=>clearInterval(id);
   },[ps.active]);
 
-  // ESCで閉じる
   useEffect(()=>{
     const h=(e)=>{ if(e.key==="Escape") onClose(); };
     window.addEventListener("keydown",h);
@@ -2521,133 +2534,227 @@ function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,ambie
 
   if(!task) return null;
 
+  const subs=task.subtasks||[];
+  const doneSubs=subs.filter(s=>s.done).length;
+
+  const handleAddSub=()=>{
+    if(!newSub.trim()) return;
+    onAddSub(newSub.trim());
+    setNewSub("");
+    subInputRef.current?.focus();
+  };
+
+  // ── カラー ──────────────────────────────────────────────
+  const bg   ="rgba(10,13,22,0.95)";
+  const panel="rgba(255,255,255,0.04)";
+  const bdr  ="rgba(255,255,255,0.09)";
+  const dim  ="rgba(255,255,255,0.35)";
+  const bright="#ffffff";
+
   return(
     <div style={{
       position:"fixed",inset:0,zIndex:500,
-      background:"rgba(10,12,20,0.88)",
-      backdropFilter:"blur(18px)",
-      display:"flex",flexDirection:"column",
-      alignItems:"center",justifyContent:"center",
-      gap:32,padding:24,
+      background:bg,backdropFilter:"blur(24px)",
+      display:"flex",alignItems:"center",justifyContent:"center",
+      padding:"24px 32px",gap:0,
     }}>
-      {/* 閉じるボタン */}
+      {/* 閉じる */}
       <button onClick={onClose} style={{
         position:"absolute",top:20,right:20,
-        background:"rgba(255,255,255,.08)",border:"1.5px solid rgba(255,255,255,.12)",
-        borderRadius:10,padding:"8px 16px",color:"rgba(255,255,255,.6)",
-        fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:6,
-      }}>
-        <X size={14}/> 閉じる
-      </button>
+        background:"transparent",border:`1px solid ${bdr}`,
+        borderRadius:8,padding:"6px 14px",color:dim,
+        fontSize:12,cursor:"pointer",display:"flex",alignItems:"center",gap:5,letterSpacing:.3,
+      }}><X size={12}/> ESC</button>
 
-      {/* モードラベル */}
-      <div style={{fontSize:12,fontWeight:700,letterSpacing:2,color:accent,textTransform:"uppercase"}}>
-        {modeL}
-      </div>
-
-      {/* タイマーサークル */}
-      <div style={{position:"relative",width:180,height:180}}>
-        <svg width="180" height="180" style={{transform:"rotate(-90deg)"}}>
-          <circle cx="90" cy="90" r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="6"/>
-          <circle cx="90" cy="90" r={r} fill="none" stroke={accent} strokeWidth="6"
-            strokeDasharray={circ} strokeDashoffset={circ*(1-prog)}
-            strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
-        </svg>
-        <div style={{
-          position:"absolute",inset:0,display:"flex",
-          flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
-        }}>
-          <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:42,fontWeight:500,
-            color:"#fff",lineHeight:1}}>{min}:{sec}</div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,.4)"}}>
-            {todayCount}/{pomo.dailyGoal} pomos
-          </div>
-        </div>
-      </div>
-
-      {/* タスク名 */}
+      {/* ═══ 左ペイン：タイマー ═══════════════════════════════ */}
       <div style={{
-        background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
-        borderRadius:16,padding:"16px 28px",maxWidth:480,width:"100%",textAlign:"center",
+        display:"flex",flexDirection:"column",alignItems:"center",
+        gap:28,paddingRight:48,borderRight:`1px solid ${bdr}`,
+        minWidth:260,
       }}>
-        <div style={{fontSize:18,fontWeight:700,color:"#fff",lineHeight:1.4}}>
-          {task.title}
-        </div>
-        {task.subtasks?.length>0&&(
-          <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginTop:8}}>
-            {task.subtasks.filter(s=>s.done).length}/{task.subtasks.length} サブタスク完了
+
+        {/* モードラベル */}
+        <div style={{
+          fontSize:11,fontWeight:700,letterSpacing:3,
+          color:accent,textTransform:"uppercase",
+        }}>{modeLabel}</div>
+
+        {/* サークル */}
+        <div style={{position:"relative",width:200,height:200}}>
+          <svg width="200" height="200" style={{transform:"rotate(-90deg)"}}>
+            <circle cx="100" cy="100" r={r} fill="none"
+              stroke="rgba(255,255,255,0.07)" strokeWidth="5"/>
+            <circle cx="100" cy="100" r={r} fill="none"
+              stroke={accent} strokeWidth="5"
+              strokeDasharray={circ}
+              strokeDashoffset={circ*(1-prog)}
+              strokeLinecap="round"
+              style={{transition:"stroke-dashoffset 1s linear"}}/>
+          </svg>
+          <div style={{
+            position:"absolute",inset:0,
+            display:"flex",flexDirection:"column",
+            alignItems:"center",justifyContent:"center",gap:4,
+          }}>
+            <div style={{
+              fontFamily:"JetBrains Mono,monospace",
+              fontSize:48,fontWeight:400,color:bright,lineHeight:1,
+            }}>{min}:{sec}</div>
+            <div style={{fontSize:11,color:dim}}>
+              {todayCount} / {pomo.dailyGoal} sessions
+            </div>
           </div>
-        )}
-      </div>
+        </div>
 
-      {/* コントロール */}
-      <div style={{display:"flex",gap:12,alignItems:"center"}}>
-        {active
-          ?<button onClick={onPause} style={{
-              background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(255,255,255,.2)",
-              borderRadius:12,padding:"12px 24px",color:"#fff",fontSize:14,fontWeight:600,
-              cursor:"pointer",display:"flex",alignItems:"center",gap:8,
-            }}><Pause size={16}/> 一時停止</button>
-          :isPaused
-            ?<button onClick={onResume} style={{
-                background:accent,border:"none",borderRadius:12,
-                padding:"12px 28px",color:"#fff",fontSize:14,fontWeight:700,
-                cursor:"pointer",display:"flex",alignItems:"center",gap:8,
-                boxShadow:`0 4px 20px ${accent}50`,
-              }}><Play size={16}/> 再開</button>
-            :<button onClick={()=>onStart(task.id)} style={{
-                background:accent,border:"none",borderRadius:12,
-                padding:"12px 28px",color:"#fff",fontSize:14,fontWeight:700,
-                cursor:"pointer",display:"flex",alignItems:"center",gap:8,
-                boxShadow:`0 4px 20px ${accent}50`,
-              }}><Play size={16}/> スタート</button>
-        }
-        <button onClick={onSkip} title="スキップ" style={{
-          background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
-          borderRadius:12,padding:"12px 14px",color:"rgba(255,255,255,.6)",cursor:"pointer",
-          display:"flex",alignItems:"center",
-        }}><SkipForward size={16}/></button>
-        <button onClick={onReset} title="リセット" style={{
-          background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
-          borderRadius:12,padding:"12px 14px",color:"rgba(255,255,255,.6)",cursor:"pointer",
-          display:"flex",alignItems:"center",
-        }}><RotateCcw size={16}/></button>
-        <button onClick={onComplete} style={{
-          background:"rgba(107,184,154,.15)",border:"1.5px solid rgba(107,184,154,.3)",
-          borderRadius:12,padding:"12px 24px",color:"#6DB89A",fontSize:14,fontWeight:600,
-          cursor:"pointer",display:"flex",alignItems:"center",gap:8,
-        }}><Check size={16}/> 完了</button>
-      </div>
+        {/* コントロールボタン */}
+        <div style={{display:"flex",gap:10,alignItems:"center"}}>
+          {active
+            ?<button onClick={onPause} style={{
+                background:panel,border:`1px solid ${bdr}`,
+                borderRadius:10,padding:"10px 20px",color:bright,
+                fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:7,
+              }}><Pause size={14}/> Pause</button>
+            :isPaused
+              ?<button onClick={onResume} style={{
+                  background:accent,border:"none",borderRadius:10,
+                  padding:"10px 24px",color:"#fff",fontSize:13,fontWeight:600,
+                  cursor:"pointer",display:"flex",alignItems:"center",gap:7,
+                  boxShadow:`0 4px 18px ${accent}44`,
+                }}><Play size={14}/> Resume</button>
+              :<button onClick={()=>onStart(task.id)} style={{
+                  background:accent,border:"none",borderRadius:10,
+                  padding:"10px 24px",color:"#fff",fontSize:13,fontWeight:600,
+                  cursor:"pointer",display:"flex",alignItems:"center",gap:7,
+                  boxShadow:`0 4px 18px ${accent}44`,
+                }}><Play size={14}/> Start</button>
+          }
+          <button onClick={onSkip} title="次のセッション" style={{
+            background:panel,border:`1px solid ${bdr}`,
+            borderRadius:10,padding:"10px 12px",color:dim,cursor:"pointer",display:"flex",
+          }}><SkipForward size={14}/></button>
+          <button onClick={onReset} title="リセット" style={{
+            background:panel,border:`1px solid ${bdr}`,
+            borderRadius:10,padding:"10px 12px",color:dim,cursor:"pointer",display:"flex",
+          }}><RotateCcw size={14}/></button>
+        </div>
 
-      {/* Ambient */}
-      <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"center"}}>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <span style={{fontSize:11,color:"rgba(255,255,255,.3)",marginRight:4}}>集中</span>
-          {Object.entries(ambientSounds).map(([key,s])=>(
-            <button key={key} onClick={()=>onAmbient(key,"work")} title={s.label}
-              style={{
-                background:ambientWork===key?accent+"33":"rgba(255,255,255,.06)",
-                border:`1px solid ${ambientWork===key?accent:"rgba(255,255,255,.12)"}`,
-                borderRadius:8,padding:"6px 10px",fontSize:16,cursor:"pointer",lineHeight:1,
-              }}>{s.icon}</button>
+        {/* Ambient */}
+        <div style={{display:"flex",flexDirection:"column",gap:6,width:"100%"}}>
+          {[["work","Focus",accent],["break","Break",T.mint]].map(([saveAs,lbl,clr])=>(
+            <div key={saveAs} style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{fontSize:10,color:dim,minWidth:36,letterSpacing:.5}}>{lbl}</span>
+              {Object.entries(ambientSounds).map(([key,s])=>(
+                <button key={key} onClick={()=>onAmbient(key,saveAs)}
+                  title={s.label}
+                  style={{
+                    background:(saveAs==="work"?ambientWork:ambientBreak)===key?clr+"22":"transparent",
+                    border:`1px solid ${(saveAs==="work"?ambientWork:ambientBreak)===key?clr:bdr}`,
+                    borderRadius:6,padding:"4px 7px",fontSize:13,cursor:"pointer",lineHeight:1,
+                    color:bright,
+                  }}>{s.icon}</button>
+              ))}
+              {(saveAs==="work"?ambientWork:ambientBreak)!=="none"&&(
+                <input type="range" min="0" max="1" step="0.05"
+                  value={ambientVol} onChange={e=>onAmbientVol(parseFloat(e.target.value))}
+                  style={{flex:1,accentColor:clr,cursor:"pointer"}}/>
+              )}
+            </div>
           ))}
-          {ambientWork!=="none"&&(
-            <input type="range" min="0" max="1" step="0.05"
-              value={ambientVol} onChange={e=>onAmbientVol(parseFloat(e.target.value))}
-              style={{width:60,accentColor:accent,cursor:"pointer",marginLeft:4}}/>
+        </div>
+      </div>
+
+      {/* ═══ 右ペイン：タスク + サブタスク ═══════════════════ */}
+      <div style={{
+        display:"flex",flexDirection:"column",gap:20,
+        paddingLeft:48,flex:1,maxWidth:420,minWidth:280,
+      }}>
+
+        {/* タスクタイトル */}
+        <div>
+          <div style={{fontSize:11,color:dim,letterSpacing:.5,marginBottom:8}}>NOW FOCUSING ON</div>
+          <div style={{fontSize:20,fontWeight:700,color:bright,lineHeight:1.4}}>
+            {task.title}
+          </div>
+        </div>
+
+        {/* サブタスクリスト */}
+        <div style={{display:"flex",flexDirection:"column",gap:2}}>
+          {subs.length>0&&(
+            <div style={{
+              fontSize:10,color:dim,letterSpacing:.5,marginBottom:6,
+              display:"flex",justifyContent:"space-between",
+            }}>
+              <span>SUBTASKS</span>
+              <span style={{color:accent}}>{doneSubs}/{subs.length}</span>
+            </div>
           )}
-        </div>
-        <div style={{display:"flex",gap:6,alignItems:"center"}}>
-          <span style={{fontSize:11,color:"rgba(255,255,255,.3)",marginRight:4}}>休憩</span>
-          {Object.entries(ambientSounds).map(([key,s])=>(
-            <button key={key} onClick={()=>onAmbient(key,"break")} title={s.label}
+          {subs.map(s=>(
+            <button key={s.id} onClick={()=>onToggleSub(s.id)}
               style={{
-                background:ambientBreak===key?T.mint+"33":"rgba(255,255,255,.06)",
-                border:`1px solid ${ambientBreak===key?T.mint:"rgba(255,255,255,.12)"}`,
-                borderRadius:8,padding:"6px 10px",fontSize:16,cursor:"pointer",lineHeight:1,
-              }}>{s.icon}</button>
+                display:"flex",alignItems:"center",gap:10,
+                background:s.done?"rgba(107,184,154,0.06)":panel,
+                border:`1px solid ${s.done?"rgba(107,184,154,0.2)":bdr}`,
+                borderRadius:8,padding:"10px 14px",cursor:"pointer",
+                textAlign:"left",width:"100%",transition:"all .15s",
+              }}>
+              <div style={{
+                width:16,height:16,borderRadius:4,flexShrink:0,
+                border:`1.5px solid ${s.done?T.mint:dim}`,
+                background:s.done?T.mint:"transparent",
+                display:"flex",alignItems:"center",justifyContent:"center",
+              }}>
+                {s.done&&<Check size={10} color="#fff"/>}
+              </div>
+              <span style={{
+                fontSize:13,color:s.done?dim:bright,
+                textDecoration:s.done?"line-through":"none",lineHeight:1.4,
+              }}>{s.title}</span>
+            </button>
           ))}
+
+          {/* サブタスク追加 */}
+          <div style={{
+            display:"flex",gap:6,marginTop:subs.length?8:0,
+            background:panel,border:`1px dashed ${bdr}`,
+            borderRadius:8,padding:"8px 12px",
+          }}>
+            <input
+              ref={subInputRef}
+              value={newSub}
+              onChange={e=>setNewSub(e.target.value)}
+              onCompositionStart={()=>{subComposing.current=true;}}
+              onCompositionEnd={()=>{subComposing.current=false;}}
+              onKeyDown={e=>{
+                if(e.key==="Enter"&&!subComposing.current) handleAddSub();
+              }}
+              placeholder="サブタスクを追加..."
+              style={{
+                flex:1,background:"transparent",border:"none",outline:"none",
+                color:bright,fontSize:13,
+              }}/>
+            <button onClick={handleAddSub}
+              style={{
+                background:newSub.trim()?accent:"transparent",
+                border:"none",borderRadius:6,
+                padding:"4px 10px",color:newSub.trim()?"#fff":dim,
+                fontSize:12,cursor:"pointer",transition:"all .15s",
+              }}>
+              <Plus size={13}/>
+            </button>
+          </div>
         </div>
+
+        {/* 完了ボタン */}
+        <button onClick={onComplete} style={{
+          background:"rgba(107,184,154,0.1)",
+          border:"1.5px solid rgba(107,184,154,0.25)",
+          borderRadius:12,padding:"13px",color:"#6DB89A",
+          fontSize:14,fontWeight:600,cursor:"pointer",
+          display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+          marginTop:"auto",
+        }}>
+          <CheckCircle2 size={16}/> タスク完了
+        </button>
       </div>
     </div>
   );
