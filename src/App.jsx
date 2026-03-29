@@ -1662,7 +1662,7 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
         onPointerUp={handleSwipeEnd}
         onPointerCancel={handleSwipeEnd}
         style={{
-          position:"relative",zIndex:1,
+          position:"relative",zIndex:menuOpen?200:1,
           transform:`translateX(${swipeX}px)`,
           transition:swipeX===0?"transform .2s ease":"none",
           background:T.bgCard,
