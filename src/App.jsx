@@ -1763,7 +1763,7 @@ function TRow({task,projects,onDS,onDrop,onToggle,onEdit,onDel,onArc,onPom,onMov
             {menuOpen&&(
               <div style={{position:"absolute",right:0,top:"calc(100% + 4px)",background:T.bgCard,
                 border:`1.5px solid ${T.border}`,borderRadius:10,boxShadow:"0 8px 28px rgba(0,0,0,.13)",
-                zIndex:100,minWidth:130,overflow:"hidden"}}>
+                zIndex:300,minWidth:130,overflow:"hidden"}}>
                 <button onClick={()=>{setMenuOpen(false);onEdit(task);}}
                   style={{width:"100%",display:"flex",alignItems:"center",gap:8,padding:"9px 14px",background:"none",border:"none",color:T.text,fontSize:13,cursor:"pointer"}}
                   className="menu-item">
