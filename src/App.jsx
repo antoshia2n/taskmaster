@@ -713,15 +713,20 @@ function AppInner() {
 
   const startPom=(id=null)=>{
     setPomS(s=>{
-      if(s.active&&id&&s.linkedId===id) return s;
+      if(s.active&&id&&s.linkedId===id){
+        // 同じタスク再押し → フォーカスモードを開く
+        if(id) setFocusMode(true);
+        return s;
+      }
       if(s.active&&id&&s.linkedId!==id) return{...s,linkedId:id};
       beep(660,0.2);
-      // 集中開始時に ambientWork を自動再生
       const workAmbient=appSettings.ambientWork||"none";
       setTimeout(()=>{
         setAmbientType(workAmbient);
         if(workAmbient==="none") _ambientPlayer.stop();
         else _ambientPlayer.play(workAmbient,appSettings.ambientVol??0.4);
+        // タスクIDあり → フォーカスモード起動
+        if(id) setFocusMode(true);
       },0);
       return{...s,active:true,linkedId:id||s.linkedId,startedAt:Date.now(),pausedAt:null};
     });
@@ -746,6 +751,7 @@ function AppInner() {
   const resetPom=()=>setPomS(s=>({...s,active:false,startedAt:null,pausedAt:null}));
 
   const [confirm, setConfirm]=useState(null);
+  const [focusMode, setFocusMode]=useState(false); // フォーカスモード表示フラグ
   // ambient は appSettings で管理（保存・Supabase同期される）
   const ambientWork = appSettings.ambientWork||"none";
   const ambientBreak = appSettings.ambientBreak||"none";
@@ -950,6 +956,28 @@ function AppInner() {
           </div>
         </div>
       </div>
+
+      {/* Focus Mode Overlay */}
+      {focusMode&&(
+        <FocusMode
+          ps={ps} pomo={pomo}
+          task={tasks.find(t=>t.id===ps.linkedId&&!t.completed&&!t.archived)||null}
+          tasks={tasks}
+          ambientVol={ambientVol} ambientWork={ambientWork}
+          ambientBreak={ambientBreak} ambientType={ambientType}
+          onStart={startPom} onPause={pausePom} onResume={resumePom}
+          onSkip={skipPom} onReset={resetPom}
+          onAmbient={setAmbient} onAmbientVol={setAmbientVolume}
+          onComplete={()=>{
+            if(ps.linkedId){
+              setTasks(ts=>ts.map(t=>t.id===ps.linkedId
+                ?{...t,completed:true,status:"done"}:t));
+            }
+            setFocusMode(false);
+          }}
+          onClose={()=>setFocusMode(false)}
+        />
+      )}
 
       {editTask!==null&&(
         <TaskModal task={editTask==="new"?null:editTask} projects={projects} groups={groups}
@@ -2459,6 +2487,173 @@ function GanttView({projects,projectGroups}){
 }
 
 // ── Manual ────────────────────────────────────────────────────────────────────
+// ── Focus Mode Overlay ────────────────────────────────────────────────────────
+function FocusMode({ps,pomo,task,tasks,ambientVol,ambientWork,ambientBreak,ambientType,
+  onStart,onPause,onResume,onSkip,onReset,onAmbient,onAmbientVol,
+  onComplete,onClose}){
+  const{active,mode,session,todayCount,linkedId,startedAt,pausedAt}=ps;
+  const isPaused=!active&&!!pausedAt;
+  const lim=(mode==="work"?pomo.workTime:mode==="break"?pomo.breakTime:pomo.longBreakTime)*60;
+  const elapsed=startedAt
+    ?Math.min(lim,Math.floor(((active?Date.now():pausedAt||Date.now())-startedAt)/1000)):0;
+  const rem=Math.max(0,lim-elapsed);
+  const min=String(Math.floor(rem/60)).padStart(2,"0");
+  const sec=String(rem%60).padStart(2,"0");
+  const prog=elapsed/lim;
+  const accent={work:T.blue,break:T.mint,longbreak:T.lav}[mode];
+  const modeL={work:"集中",break:"休憩",longbreak:"長い休憩"}[mode];
+  const r=64; const circ=2*Math.PI*r;
+
+  // tick
+  const[,setTick]=useState(0);
+  useEffect(()=>{
+    if(!ps.active) return;
+    const id=setInterval(()=>setTick(t=>t+1),500);
+    return()=>clearInterval(id);
+  },[ps.active]);
+
+  // ESCで閉じる
+  useEffect(()=>{
+    const h=(e)=>{ if(e.key==="Escape") onClose(); };
+    window.addEventListener("keydown",h);
+    return()=>window.removeEventListener("keydown",h);
+  },[onClose]);
+
+  if(!task) return null;
+
+  return(
+    <div style={{
+      position:"fixed",inset:0,zIndex:500,
+      background:"rgba(10,12,20,0.88)",
+      backdropFilter:"blur(18px)",
+      display:"flex",flexDirection:"column",
+      alignItems:"center",justifyContent:"center",
+      gap:32,padding:24,
+    }}>
+      {/* 閉じるボタン */}
+      <button onClick={onClose} style={{
+        position:"absolute",top:20,right:20,
+        background:"rgba(255,255,255,.08)",border:"1.5px solid rgba(255,255,255,.12)",
+        borderRadius:10,padding:"8px 16px",color:"rgba(255,255,255,.6)",
+        fontSize:13,cursor:"pointer",display:"flex",alignItems:"center",gap:6,
+      }}>
+        <X size={14}/> 閉じる
+      </button>
+
+      {/* モードラベル */}
+      <div style={{fontSize:12,fontWeight:700,letterSpacing:2,color:accent,textTransform:"uppercase"}}>
+        {modeL}
+      </div>
+
+      {/* タイマーサークル */}
+      <div style={{position:"relative",width:180,height:180}}>
+        <svg width="180" height="180" style={{transform:"rotate(-90deg)"}}>
+          <circle cx="90" cy="90" r={r} fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="6"/>
+          <circle cx="90" cy="90" r={r} fill="none" stroke={accent} strokeWidth="6"
+            strokeDasharray={circ} strokeDashoffset={circ*(1-prog)}
+            strokeLinecap="round" style={{transition:"stroke-dashoffset 1s linear"}}/>
+        </svg>
+        <div style={{
+          position:"absolute",inset:0,display:"flex",
+          flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,
+        }}>
+          <div style={{fontFamily:"JetBrains Mono,monospace",fontSize:42,fontWeight:500,
+            color:"#fff",lineHeight:1}}>{min}:{sec}</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,.4)"}}>
+            {todayCount}/{pomo.dailyGoal} pomos
+          </div>
+        </div>
+      </div>
+
+      {/* タスク名 */}
+      <div style={{
+        background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
+        borderRadius:16,padding:"16px 28px",maxWidth:480,width:"100%",textAlign:"center",
+      }}>
+        <div style={{fontSize:18,fontWeight:700,color:"#fff",lineHeight:1.4}}>
+          {task.title}
+        </div>
+        {task.subtasks?.length>0&&(
+          <div style={{fontSize:12,color:"rgba(255,255,255,.4)",marginTop:8}}>
+            {task.subtasks.filter(s=>s.done).length}/{task.subtasks.length} サブタスク完了
+          </div>
+        )}
+      </div>
+
+      {/* コントロール */}
+      <div style={{display:"flex",gap:12,alignItems:"center"}}>
+        {active
+          ?<button onClick={onPause} style={{
+              background:"rgba(255,255,255,.1)",border:"1.5px solid rgba(255,255,255,.2)",
+              borderRadius:12,padding:"12px 24px",color:"#fff",fontSize:14,fontWeight:600,
+              cursor:"pointer",display:"flex",alignItems:"center",gap:8,
+            }}><Pause size={16}/> 一時停止</button>
+          :isPaused
+            ?<button onClick={onResume} style={{
+                background:accent,border:"none",borderRadius:12,
+                padding:"12px 28px",color:"#fff",fontSize:14,fontWeight:700,
+                cursor:"pointer",display:"flex",alignItems:"center",gap:8,
+                boxShadow:`0 4px 20px ${accent}50`,
+              }}><Play size={16}/> 再開</button>
+            :<button onClick={()=>onStart(task.id)} style={{
+                background:accent,border:"none",borderRadius:12,
+                padding:"12px 28px",color:"#fff",fontSize:14,fontWeight:700,
+                cursor:"pointer",display:"flex",alignItems:"center",gap:8,
+                boxShadow:`0 4px 20px ${accent}50`,
+              }}><Play size={16}/> スタート</button>
+        }
+        <button onClick={onSkip} title="スキップ" style={{
+          background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
+          borderRadius:12,padding:"12px 14px",color:"rgba(255,255,255,.6)",cursor:"pointer",
+          display:"flex",alignItems:"center",
+        }}><SkipForward size={16}/></button>
+        <button onClick={onReset} title="リセット" style={{
+          background:"rgba(255,255,255,.06)",border:"1.5px solid rgba(255,255,255,.1)",
+          borderRadius:12,padding:"12px 14px",color:"rgba(255,255,255,.6)",cursor:"pointer",
+          display:"flex",alignItems:"center",
+        }}><RotateCcw size={16}/></button>
+        <button onClick={onComplete} style={{
+          background:"rgba(107,184,154,.15)",border:"1.5px solid rgba(107,184,154,.3)",
+          borderRadius:12,padding:"12px 24px",color:"#6DB89A",fontSize:14,fontWeight:600,
+          cursor:"pointer",display:"flex",alignItems:"center",gap:8,
+        }}><Check size={16}/> 完了</button>
+      </div>
+
+      {/* Ambient */}
+      <div style={{display:"flex",flexDirection:"column",gap:8,alignItems:"center"}}>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:11,color:"rgba(255,255,255,.3)",marginRight:4}}>集中</span>
+          {Object.entries(ambientSounds).map(([key,s])=>(
+            <button key={key} onClick={()=>onAmbient(key,"work")} title={s.label}
+              style={{
+                background:ambientWork===key?accent+"33":"rgba(255,255,255,.06)",
+                border:`1px solid ${ambientWork===key?accent:"rgba(255,255,255,.12)"}`,
+                borderRadius:8,padding:"6px 10px",fontSize:16,cursor:"pointer",lineHeight:1,
+              }}>{s.icon}</button>
+          ))}
+          {ambientWork!=="none"&&(
+            <input type="range" min="0" max="1" step="0.05"
+              value={ambientVol} onChange={e=>onAmbientVol(parseFloat(e.target.value))}
+              style={{width:60,accentColor:accent,cursor:"pointer",marginLeft:4}}/>
+          )}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          <span style={{fontSize:11,color:"rgba(255,255,255,.3)",marginRight:4}}>休憩</span>
+          {Object.entries(ambientSounds).map(([key,s])=>(
+            <button key={key} onClick={()=>onAmbient(key,"break")} title={s.label}
+              style={{
+                background:ambientBreak===key?T.mint+"33":"rgba(255,255,255,.06)",
+                border:`1px solid ${ambientBreak===key?T.mint:"rgba(255,255,255,.12)"}`,
+                borderRadius:8,padding:"6px 10px",fontSize:16,cursor:"pointer",lineHeight:1,
+              }}>{s.icon}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 function ManualView(){
   const sections=[
     {
