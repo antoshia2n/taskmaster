@@ -242,24 +242,10 @@ const REPEAT_OPTS=[
 const GROUP_COLORS=[T.blue,T.lav,T.mint,T.amber,T.peach,"#2D4A8A","#B8A9D4","#A8D4B8","#F4A261","#8ECAE6"];
 
 // ── Default Data ──────────────────────────────────────────────────────────────
-const DEF_PROJECT_GROUPS=[
-  {id:"pg_active",title:"進行中",color:T.blue, order:0},
-  {id:"pg_plan",  title:"計画中",color:T.lav,  order:1},
-];
-const DEF_GROUPS=[
-  {id:"morning",title:"Morning",color:T.amber,order:0},
-  {id:"main",   title:"Focus",  color:T.blue, order:1},
-  {id:"evening",title:"Evening",color:T.lav,  order:2},
-];
-const DEF_TASKS=[
-  {id:"t1",title:"朝のルーティン確認",status:"todo",priority:"medium",deadline:today(),goalTime:"08:00",repeat:"daily",projectId:null,groupId:"morning",subtasks:[{id:"s1",title:"ストレッチ 10分",done:false},{id:"s2",title:"日記を書く",done:false}],notes:"毎朝8時までに完了",links:[],completed:false,archived:false,order:0},
-  {id:"t2",title:"プロジェクト計画書の作成",status:"inprogress",priority:"high",deadline:tomorrow(),goalTime:"12:00",repeat:"",projectId:"p1",groupId:"main",subtasks:[],notes:"要件定義から始める",links:[{url:"https://example.com",label:"参考資料"}],completed:false,archived:false,order:1},
-  {id:"t3",title:"メール返信",status:"todo",priority:"low",deadline:today(),goalTime:"17:00",repeat:"daily",projectId:null,groupId:"evening",subtasks:[],notes:"",links:[],completed:false,archived:false,order:2},
-];
-const DEF_PROJECTS=[
-  {id:"p1",title:"Webアプリ開発",    status:"inprogress",priority:"high",startDate:"2025-01-01",endDate:"2025-03-31",parentId:null,notes:"メインプロジェクト",links:[],color:T.blue,order:0,expanded:true,projectGroupId:"pg_active"},
-  {id:"p2",title:"フロントエンド実装",status:"inprogress",priority:"high",startDate:"2025-01-15",endDate:"2025-03-15",parentId:"p1",notes:"",links:[],color:T.lav,order:1,expanded:false},
-];
+const DEF_TASKS=[];
+const DEF_PROJECTS=[];
+const DEF_GROUPS=[];
+const DEF_PROJECT_GROUPS=[];
 const DEF_POMO={workTime:25,breakTime:5,longBreakTime:15,dailyGoal:8,sessionsBeforeLong:4};
 const DEF_SETTINGS={uiScale:"medium",theme:"auto",notifyPomo:true,notifyTasks:true,ambientWork:"none",ambientBreak:"none",ambientVol:0.4};
 
@@ -276,26 +262,13 @@ async function localSave(key,val){
   }
 }
 
-// ── Supabase REST ─────────────────────────────────────────────────────────────
-class SB{
-  constructor(url,key){this.url=url?.replace(/\/$/,"");this.key=key;}
-  h(){return{"Content-Type":"application/json","apikey":this.key,"Authorization":`Bearer ${this.key}`,"Prefer":"return=minimal"};}
-  async get(t){const r=await fetch(`${this.url}/rest/v1/${t}?select=*`,{headers:this.h()});if(!r.ok)throw new Error();return r.json();}
-  async upsert(t,row){const r=await fetch(`${this.url}/rest/v1/${t}`,{method:"POST",headers:{...this.h(),"Prefer":"resolution=merge-duplicates,return=minimal"},body:JSON.stringify(row)});if(!r.ok)throw new Error();}
-  async test(){const r=await fetch(`${this.url}/rest/v1/app_data?limit=1`,{headers:this.h()});return r.ok;}
-}
-
 // ── Notification helper ───────────────────────────────────────────────────────
 function notify(title, body, tag="tm"){
   if(!("Notification" in window)) return;
   if(Notification.permission!=="granted") return;
-  try{
-    new Notification(title,{body,tag,icon:"/icon-192.png",badge:"/icon-192.png",silent:false});
-  }catch(e){
-    // iOS PWA では ServiceWorker 経由が必要なケースがある（fallback: 無視）
-  }
+  try{ new Notification(title,{body,tag,icon:"/icon-192.png",silent:false}); }
+  catch(e){}
 }
-
 async function requestNotifyPermission(){
   if(!("Notification" in window)) return "unsupported";
   if(Notification.permission==="granted") return "granted";
@@ -303,42 +276,27 @@ async function requestNotifyPermission(){
   return await Notification.requestPermission();
 }
 
-
 // ── Ambient Sound System ─────────────────────────────────────────────────────
-// base64 スロット：embed_audio.py で実際の音源データに置き換える
-const AMBIENT_B64 = {
-  white: "",
-  rain:  "",
-  waves: "",
-  fire:  "",
-};
+const AMBIENT_B64 = { white:"", rain:"", waves:"", fire:"" };
 
 const ambientSounds = {
-  none:  { label:"OFF",         icon:"🔇" },
+  none:  { label:"OFF",          icon:"🔇" },
   white: { label:"ホワイトノイズ", icon:"📻" },
-  rain:  { label:"雨",           icon:"🌧️" },
-  waves: { label:"波",           icon:"🌊" },
+  rain:  { label:"雨",            icon:"🌧️" },
+  waves: { label:"波",            icon:"🌊" },
   fire:  { label:"焚き火",        icon:"🔥" },
 };
 
 class AmbientPlayer {
   constructor(){
-    this.audioEl=null;
-    this.ctx=null;
-    this.nodes=[];
-    this.gainNode=null;
-    this.volume=0.35;
-    this.current="none";
+    this.audioEl=null; this.ctx=null; this.nodes=[];
+    this.gainNode=null; this.volume=0.35; this.current="none";
     this._crackleTimer=null;
   }
-
-  // ── 停止 ─────────────────────────────────────────────────
   _stopAudio(){
     if(this.audioEl){
-      this.audioEl.onerror=null;
-      this.audioEl.pause();
-      this.audioEl.src="";
-      this.audioEl=null;
+      this.audioEl.onerror=null; this.audioEl.pause();
+      this.audioEl.src=""; this.audioEl=null;
     }
   }
   _stopSynth(){
@@ -348,8 +306,6 @@ class AmbientPlayer {
     if(this.gainNode){try{this.gainNode.disconnect();}catch(e){} this.gainNode=null;}
   }
   stopAll(){ this._stopSynth(); this._stopAudio(); }
-
-  // ── Web Audio ────────────────────────────────────────────
   _ctx(){
     if(!this.ctx) this.ctx=new(window.AudioContext||window.webkitAudioContext)();
     if(this.ctx.state==="suspended") this.ctx.resume();
@@ -370,9 +326,8 @@ class AmbientPlayer {
   }
   _master(){
     const ctx=this._ctx(),g=ctx.createGain();
-    g.gain.value=this.volume;
-    g.connect(ctx.destination);
-    this.gainNode=g;return g;
+    g.gain.value=this.volume; g.connect(ctx.destination);
+    this.gainNode=g; return g;
   }
   _playSynth(type){
     const ctx=this._ctx(),m=this._master();
@@ -429,47 +384,29 @@ class AmbientPlayer {
       this.nodes=[coal,flame,lfo];
     }
   }
-
-  // ── 公開 API ─────────────────────────────────────────────
   play(type,vol){
-    // 必ず全停止してからスタート
     this.stopAll();
     if(type==="none"){this.current="none";return;}
     this.current=type;
     if(vol!==undefined) this.volume=vol;
-
     const b64=AMBIENT_B64[type];
     const src=b64||`/${type}.mp3`;
-
-    // HTML5 Audio（録音ファイル）を試みる
     const el=new Audio();
-    el.loop=true;
-    el.volume=this.volume;
-    el.onerror=null; // フォールバックなし（二重再生を防ぐ）
-    this.audioEl=el;
-    el.src=src; // src設定はイベント登録後
-    el.play().catch(()=>{
-      // ファイルが見つからない場合のみ synth にフォールバック
-      this._stopAudio();
-      this._playSynth(type);
-    });
+    el.loop=true; el.volume=this.volume; el.onerror=null;
+    this.audioEl=el; el.src=src;
+    el.play().catch(()=>{ this._stopAudio(); });
   }
-
   setVolume(v){
     this.volume=v;
     if(this.audioEl) this.audioEl.volume=v;
     if(this.gainNode) this.gainNode.gain.setTargetAtTime(v,this._ctx().currentTime,0.05);
   }
-
   pause(){
     if(this.audioEl&&!this.audioEl.paused) this.audioEl.pause();
-    if(this.gainNode) this.gainNode.gain.setTargetAtTime(0,this._ctx().currentTime,0.1);
   }
-
   stop(){ this.stopAll(); this.current="none"; }
 }
 const _ambientPlayer = new AmbientPlayer();
-
 
 // ── Pointer Drag System ───────────────────────────────────────────────────────
 const dragState = {
@@ -479,15 +416,12 @@ const dragState = {
 
 function startPointerDrag(e, data, onDrop) {
   if(!e)return;
-  // data-drag-root 属性があればそれを優先、なければ近くのカード系要素を探す
   const root = e.currentTarget?.closest?.("[data-drag-root]");
   const el = root || e.currentTarget?.closest?.(".tr,.pg-card,.drag-row") || e.currentTarget || e.target;
   if(!el)return;
   const rect = el.getBoundingClientRect();
   const cx = e.clientX ?? 0;
   const cy = e.clientY ?? 0;
-
-  // ゴースト要素
   const ghost = el.cloneNode(true);
   ghost.style.cssText = [
     "position:fixed",`left:${rect.left}px`,`top:${rect.top}px`,
@@ -497,7 +431,6 @@ function startPointerDrag(e, data, onDrop) {
     "transform:scale(1.04) rotate(0.8deg)",
   ].join(";");
   document.body.appendChild(ghost);
-
   el.style.opacity = "0.28";
   Object.assign(dragState,{
     active:true, startX:cx-rect.left, startY:cy-rect.top,
@@ -534,14 +467,13 @@ function _pdEnd(e){
   const target=below?.closest("[data-drop-id]");
   const dropId=target?.dataset.dropId;
   if(dragState.data&&dragState.onDrop){
-    // below も渡す（グループドラッグは data-drop-group を自分で辿る）
     dragState.onDrop(dragState.data,dropId,below);
     if(dropId&&navigator.vibrate)navigator.vibrate(14);
   }
   dragState.data=null; dragState.onDrop=null; dragState.sourceEl=null;
 }
 
-let _pendingPE = null; // 最後のPointerDownイベントを保持（dragState設定用）
+let _pendingPE = null;
 if(typeof window!=="undefined"){
   window.addEventListener("pointermove",_pdMove,{passive:true});
   window.addEventListener("pointerup",_pdEnd);
@@ -557,62 +489,27 @@ function AppInner() {
   const [groups,   setGroupsR]   = useState(DEF_GROUPS);
   const [pomo,     setPomoR]     = useState(DEF_POMO);
   const [appSettings, setAppSettingsR] = useState(DEF_SETTINGS);
-  const [sbCfg,    setSbCfgR]    = useState({url:"",key:""});
-  const [sbStatus, setSbStatus]  = useState("disconnected");
   const [view,     setView]      = useState("today");
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [ready,    setReady]     = useState(false);
-  const sbRef = useRef(null);
-
-  const sbTimers = useRef({});
   const fsTimers = useRef({});
   const syncSB = useCallback((key,val) => {
-    // Firestore に書き込み（デバウンス800ms）
+    // localStorage + Firestore に 1秒デバウンス
     clearTimeout(fsTimers.current[key]);
-    fsTimers.current[key] = setTimeout(() => _fsSave(key, val), 800);
-    // Supabase にも書き込み（設定済みの場合）
-    if(!sbRef.current)return;
-    clearTimeout(sbTimers.current[key]);
-    sbTimers.current[key]=setTimeout(async()=>{
-      try{await sbRef.current.upsert("app_data",{key,value:val,updated_at:new Date().toISOString()});}
-      catch(e){}
-    },800);
+    fsTimers.current[key] = setTimeout(() => {
+      localSave("tm_"+key, val);
+      _fsSave(key, val);
+    }, 1000);
   },[]);
 
-  const setTasks    = useCallback(v=>{setTasksR   (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_tasks",n);   syncSB("tasks",n);   return n;});},[syncSB]);
-  const setProjects = useCallback(v=>{setProjectsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_projects",n);syncSB("projects",n);return n;});},[syncSB]);
-  const setProjectGroups = useCallback(v=>{setProjectGroupsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_project_groups",n);syncSB("project_groups",n);return n;});},[syncSB]);
-  const setGroups   = useCallback(v=>{setGroupsR  (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_groups",n); syncSB("groups",n); return n;});},[syncSB]);
-  const setPomo     = useCallback(v=>{setPomoR     (p=>{const n=typeof v==="function"?v(p):v;localSave("tm_pomo",n);  syncSB("pomo",n);   return n;});},[syncSB]);
-  const setAppSettings = useCallback(v=>{setAppSettingsR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_settings",n);syncSB("settings",n);return n;});},[syncSB]);
-  const setSbCfg    = useCallback(v=>{setSbCfgR(p=>{const n=typeof v==="function"?v(p):v;localSave("tm_sbcfg",n);return n;});},[]);
+  // ② localSave もデバウンス（syncSBと同じタイマーで管理）
+  const setTasks    = useCallback(v=>{setTasksR   (p=>{const n=typeof v==="function"?v(p):v;syncSB("tasks",n);   return n;});},[syncSB]);
+  const setProjects = useCallback(v=>{setProjectsR(p=>{const n=typeof v==="function"?v(p):v;syncSB("projects",n);return n;});},[syncSB]);
+  const setProjectGroups = useCallback(v=>{setProjectGroupsR(p=>{const n=typeof v==="function"?v(p):v;syncSB("project_groups",n);return n;});},[syncSB]);
+  const setGroups   = useCallback(v=>{setGroupsR  (p=>{const n=typeof v==="function"?v(p):v;syncSB("groups",n); return n;});},[syncSB]);
+  const setPomo     = useCallback(v=>{setPomoR     (p=>{const n=typeof v==="function"?v(p):v;syncSB("pomo",n);   return n;});},[syncSB]);
+  const setAppSettings = useCallback(v=>{setAppSettingsR(p=>{const n=typeof v==="function"?v(p):v;syncSB("settings",n);return n;});},[syncSB]);
 
-  const connectSB = useCallback(async (url,key) => {
-    setSbStatus("connecting");
-    const client=new SB(url,key);
-    try{
-      if(!await client.test()){setSbStatus("error");return;}
-      // 接続成功時に確実に保存（再起動後の自動再接続のため）
-      try{localStorage.setItem("tm_sbcfg",JSON.stringify({url,key}));}catch(e){}
-      sbRef.current=client;
-      const rows=await client.get("app_data");
-      const rem={};rows.forEach(r=>{rem[r.key]=r.value;});
-      // Merge strategy: use Supabase data silently (no flash) by batching state updates
-      // Only overwrite if Supabase actually has data for that key
-      if(rem.tasks)    setTasksR(rem.tasks.map(x=>({...x,links:normLinks(x.links)})));
-      if(rem.projects) setProjectsR(rem.projects.map(x=>({...x,links:normLinks(x.links)})));
-      if(rem.groups)   setGroupsR(rem.groups);
-      if(rem.project_groups) setProjectGroupsR(rem.project_groups);
-      if(rem.pomo)     setPomoR(rem.pomo);
-      if(rem.settings) setAppSettingsR(rem.settings);
-      // Push local data up to Supabase if Supabase was empty
-      if(!rem.tasks)    setTasks(t=>t);
-      if(!rem.projects) setProjects(p=>p);
-      if(!rem.groups)   setGroups(g=>g);
-      if(!rem.project_groups) setProjectGroups(pg=>pg);
-      setSbStatus("connected");
-    }catch(e){setSbStatus("error");}
-  },[]);
 
   useEffect(()=>{
     (async()=>{
@@ -620,11 +517,11 @@ function AppInner() {
         localLoad("tm_tasks",DEF_TASKS),localLoad("tm_projects",DEF_PROJECTS),
         localLoad("tm_groups",DEF_GROUPS),localLoad("tm_project_groups",DEF_PROJECT_GROUPS),
         localLoad("tm_pomo",DEF_POMO),
-        localLoad("tm_sbcfg",{url:"",key:""}),localLoad("tm_settings",DEF_SETTINGS),
+        localLoad("tm_settings",DEF_SETTINGS),
       ]);
       setTasksR(t.map(x=>({...x,links:normLinks(x.links)}))); 
       setProjectsR(p.map(x=>({...x,links:normLinks(x.links)})));
-      setGroupsR(g);setProjectGroupsR(pg);setPomoR(pm);setSbCfgR(sb);setAppSettingsR(st);
+      setGroupsR(g);setProjectGroupsR(pg);setPomoR(pm);setAppSettingsR(st);
       // Restore today's pomodoro count (reset if new day)
       const ps=await localLoad("tm_pomo_session",{todayCount:0,date:today()});
       if(ps.date===today()) setPomS(s=>({...s,todayCount:ps.todayCount,lastCountDate:today()}));
@@ -648,7 +545,6 @@ function AppInner() {
           if (!fsData.project_groups)_fsSave("project_groups", pg);
         } catch(e) { console.error("Firestore load failed:", e); }
       }
-      if(sb.url&&sb.key)await connectSB(sb.url,sb.key);
       setReady(true);
       // 通知権限をリクエスト（まだ決定していない場合のみ）
       if("Notification" in window && Notification.permission==="default"){
@@ -759,12 +655,29 @@ function AppInner() {
   // 現在再生中の音（手動変更も反映）
   const [ambientType,setAmbientType]=useState("none");
   const setAmbient=(type,saveAs,vol)=>{
-    // saveAs: "work" | "break" | undefined（一時的な変更）
     const v=(typeof vol==="number"?vol:null)??ambientVol;
-    setAmbientType(type);
-    _ambientPlayer.play(type,v);
-    if(saveAs==="work") setAppSettings(a=>({...a,ambientWork:type}));
-    else if(saveAs==="break") setAppSettings(a=>({...a,ambientBreak:type}));
+    if(saveAs==="work"){
+      // 集中用に保存。現在集中中なら即反映
+      setAppSettings(a=>({...a,ambientWork:type}));
+      if(ps.active&&ps.mode==="work"){
+        setAmbientType(type);
+        if(type==="none") _ambientPlayer.stop();
+        else _ambientPlayer.play(type,v);
+      }
+    } else if(saveAs==="break"){
+      // 休憩用に保存。現在休憩中なら即反映
+      setAppSettings(a=>({...a,ambientBreak:type}));
+      if(ps.active&&ps.mode!=="work"){
+        setAmbientType(type);
+        if(type==="none") _ambientPlayer.stop();
+        else _ambientPlayer.play(type,v);
+      }
+    } else {
+      // saveAs なし（手動再生）→ 即時再生
+      setAmbientType(type);
+      if(type==="none") _ambientPlayer.stop();
+      else _ambientPlayer.play(type,v);
+    }
   };
   const setAmbientVolume=(v)=>{
     setAppSettings(a=>({...a,ambientVol:v}));
@@ -906,7 +819,7 @@ function AppInner() {
 }
       `}</style>
 
-      <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)} sbStatus={sbStatus}/>
+      <Sidebar view={view} setView={v=>{setView(v);setSelectedProjectId(null);}} tasks={tasks.filter(t=>!t.archived)}/>
 
       <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
         <PomoBar ps={ps} pomo={pomo} tasks={tasks} onStart={startPom} onPause={pausePom} onResume={resumePom} onSkip={skipPom} onReset={resetPom} ambientVol={ambientVol} ambientWork={ambientWork} ambientBreak={ambientBreak} onAmbient={setAmbient} onAmbientVol={setAmbientVolume}/>
@@ -944,14 +857,7 @@ function AppInner() {
             {view==="manual"&&<ManualView/>}
             {view==="settings"&&(
               <SettingsView pomo={pomo} setPomo={setPomo}
-                appSettings={appSettings} setAppSettings={setAppSettings}
-                sbCfg={sbCfg} setSbCfg={setSbCfg}
-                sbStatus={sbStatus} onConnect={(u,k)=>{
-              // localStorageに直接・即時書き込み（state batchを経由しない）
-              try{localStorage.setItem("tm_sbcfg",JSON.stringify({url:u,key:k}));}catch(e){}
-              setSbCfg({url:u,key:k});
-              connectSB(u,k);
-            }}/>
+                appSettings={appSettings} setAppSettings={setAppSettings}/>
             )}
           </div>
         </div>
@@ -1050,16 +956,13 @@ function AppInner() {
 }
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({view,setView,tasks,sbStatus}){
+function Sidebar({view,setView,tasks}){
   const td=tasks.filter(t=>!t.completed&&t.deadline===today()).length;
   const ip=tasks.filter(t=>t.status==="inprogress").length;
   const nav=[
     [{id:"today",icon:<Zap size={16}/>,label:"Today",badge:td},{id:"tomorrow",icon:<Sunrise size={16}/>,label:"Tomorrow"},{id:"week",icon:<Calendar size={16}/>,label:"This Week"},{id:"all",icon:<Inbox size={16}/>,label:"All Tasks",badge:ip}],
     [{id:"projects",icon:<Folder size={16}/>,label:"Projects"},{id:"gantt",icon:<BarChart3 size={16}/>,label:"Gantt Chart"}],
     [{id:"archive",icon:<Archive size={16}/>,label:"Archive"},{id:"manual",icon:<BookOpen size={16}/>,label:"Manual"},{id:"settings",icon:<Settings size={16}/>,label:"Settings"}],
-  ];
-  const sbC={connected:T.mint,connecting:T.amber,error:T.peach,disconnected:"#64748B"}[sbStatus];
-  const sbL={connected:"Supabase sync",connecting:"接続中...",error:"エラー",disconnected:"ローカル保存"}[sbStatus];
   const isActive=(id)=>view===id||(id==="projects"&&view==="project_detail");
 
   return(
@@ -1088,10 +991,7 @@ function Sidebar({view,setView,tasks,sbStatus}){
         ))}
       </nav>
       <div className="sbft" style={{padding:"12px 18px 16px",borderTop:"1px solid rgba(255,255,255,.06)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
-          <div style={{width:7,height:7,borderRadius:"50%",background:sbC,flexShrink:0}}/>
-          <span style={{fontSize:11,color:"rgba(255,255,255,.28)",fontFamily:"JetBrains Mono,monospace"}}>{sbL}</span>
-        </div>
+
         <div style={{fontSize:10,color:"rgba(255,255,255,.18)",fontFamily:"JetBrains Mono,monospace"}}>
           {new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",weekday:"short"})}
         </div>
@@ -1231,10 +1131,14 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
 
   const undone=tasks.filter(t=>!t.completed).length;
   const searchFiltered=searchQ.trim()?tasks.filter(t=>t.title.toLowerCase().includes(searchQ.toLowerCase())||(t.notes||"").toLowerCase().includes(searchQ.toLowerCase())):tasks;
-  const visibleTasks=view==="all"&&!showDone?searchFiltered.filter(t=>!t.completed):searchFiltered;
-  const byG=groups.reduce((a,g)=>{a[g.id]=visibleTasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{});
-  const ung=visibleTasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order);
-  const sortedGroups=[...groups].sort((a,b)=>a.order-b.order);
+  const visibleTasks=useMemo(()=>
+    view==="all"&&!showDone?searchFiltered.filter(t=>!t.completed):searchFiltered,
+    [view,showDone,searchFiltered]);
+  const{byG,ung,sortedGroups}=useMemo(()=>({
+    sortedGroups:[...groups].sort((a,b)=>a.order-b.order),
+    byG:groups.reduce((a,g)=>{a[g.id]=visibleTasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{}),
+    ung:visibleTasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order),
+  }),[groups,visibleTasks]);
   const vl={today:"Today",tomorrow:"Tomorrow",week:"This Week",all:"All Tasks",manual:"マニュアル"};
 
   const addQ=(gid)=>{
@@ -2861,14 +2765,11 @@ function ManualView(){
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sbStatus,onConnect}){
-  const [pf,setPf]=useState(pomo),[sbf,setSbf]=useState(sbCfg),[testing,setTesting]=useState(false);
-  // sbCfg が外から更新されたとき（初期ロード後）フォームに反映
-  useEffect(()=>{if(sbCfg.url||sbCfg.key)setSbf(sbCfg);},[sbCfg.url,sbCfg.key]);
+function SettingsView({pomo,setPomo,appSettings,setAppSettings}){
+  const [pf,setPf]=useState(pomo),[testing,setTesting]=useState(false);
   const sp=(k,v)=>setPf(f=>({...f,[k]:v}));
   const inp={background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 13px",color:T.text,fontSize:14,width:"100%"};
   const lbl={fontSize:11,color:T.textMuted,marginBottom:5,display:"block",textTransform:"uppercase",letterSpacing:.5,fontWeight:600};
-  const sbI={connected:{c:T.mint,l:"Connected"},connecting:{c:T.amber,l:"Connecting..."},error:{c:T.peach,l:"Error"},disconnected:{c:T.textMuted,l:"Disconnected"}}[sbStatus];
   const handleConn=async()=>{setTesting(true);await onConnect(sbf.url,sbf.key);setTesting(false);};
 
   const currentScale=appSettings?.uiScale||"medium";
@@ -2996,8 +2897,8 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings,sbCfg,setSbCfg,sb
           <div><label style={lbl}>Anon Key</label><input type="password" value={sbf.key} onChange={e=>setSbf(f=>({...f,key:e.target.value}))} placeholder="eyJhbGci..." style={inp}/></div>
         </div>
         <button onClick={handleConn} disabled={testing||!sbf.url||!sbf.key}
-          style={{marginTop:18,background:sbStatus==="connected"?T.mint:T.blue,border:"none",borderRadius:9,padding:"10px 26px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:7,opacity:(!sbf.url||!sbf.key)?.5:1,cursor:"pointer",boxShadow:`0 4px 14px ${T.blue}35`}}>
-          {testing?<><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> Connecting...</>:sbStatus==="connected"?<><Check size={14}/> Reconnect</>:<><Wifi size={14}/> Connect</>}
+          style={{marginTop:18,background:T.blue,border:"none",borderRadius:9,padding:"10px 26px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:7,opacity:(!sbf.url||!sbf.key)?.5:1,cursor:"pointer",boxShadow:`0 4px 14px ${T.blue}35`}}>
+          {testing?<><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> Connecting...</>:false?<><Check size={14}/> Reconnect</>:<><Wifi size={14}/> Connect</>}
         </button>
         <div style={{marginTop:20,padding:16,background:T.bg,borderRadius:10,border:`1px solid ${T.borderLight}`}}>
           <div style={{fontSize:12,fontWeight:700,color:T.textSec,marginBottom:10,display:"flex",alignItems:"center",gap:6}}><BookOpen size={12}/> SQL Setup</div>
