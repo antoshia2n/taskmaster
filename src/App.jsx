@@ -513,7 +513,7 @@ function AppInner() {
 
   useEffect(()=>{
     (async()=>{
-      const [t,p,g,pg,pm,sb,st]=await Promise.all([
+      const [t,p,g,pg,pm,st]=await Promise.all([
         localLoad("tm_tasks",DEF_TASKS),localLoad("tm_projects",DEF_PROJECTS),
         localLoad("tm_groups",DEF_GROUPS),localLoad("tm_project_groups",DEF_PROJECT_GROUPS),
         localLoad("tm_pomo",DEF_POMO),
@@ -2783,8 +2783,6 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings}){
   const sp=(k,v)=>setPf(f=>({...f,[k]:v}));
   const inp={background:T.bg,border:`1.5px solid ${T.border}`,borderRadius:9,padding:"9px 13px",color:T.text,fontSize:14,width:"100%"};
   const lbl={fontSize:11,color:T.textMuted,marginBottom:5,display:"block",textTransform:"uppercase",letterSpacing:.5,fontWeight:600};
-  const handleConn=async()=>{setTesting(true);await onConnect(sbf.url,sbf.key);setTesting(false);};
-
   const currentScale=appSettings?.uiScale||"medium";
 
   return(
@@ -2893,29 +2891,17 @@ function SettingsView({pomo,setPomo,appSettings,setAppSettings}){
         <button onClick={()=>setPomo(pf)} style={{marginTop:20,background:T.blue,border:"none",borderRadius:9,padding:"10px 26px",color:"#fff",fontSize:13,fontWeight:700,boxShadow:`0 4px 14px ${T.blue}35`,cursor:"pointer"}}>Save</button>
       </div>
 
-      {/* Supabase */}
-      <div style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:14,padding:24,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:34,height:34,background:T.mintBg,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><Database size={16} color={T.mint}/></div>
-            <div><div style={{fontWeight:700,fontSize:14,color:T.text}}>データ同期</div><div style={{fontSize:12,color:T.textMuted}}>Googleアカウントで自動同期</div></div>
-          </div>
-          <div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 12px",background:`${sbI.c}14`,border:`1px solid ${sbI.c}30`,borderRadius:8}}>
-            <div style={{width:7,height:7,borderRadius:"50%",background:sbI.c}}/>
-            <span style={{fontSize:12,color:sbI.c,fontWeight:600}}>{sbI.l}</span>
+      {/* Firestore 自動同期 */}
+      <div style={{background:T.bgCard,border:`1.5px solid ${T.border}`,borderRadius:14,padding:20,boxShadow:"0 2px 8px rgba(0,0,0,.04)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <div style={{width:34,height:34,background:T.mintBg,borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center"}}><Database size={16} color={T.mint}/></div>
+          <div>
+            <div style={{fontWeight:700,fontSize:14,color:T.text}}>データ同期</div>
+            <div style={{fontSize:12,color:T.textMuted}}>Googleアカウントで自動同期</div>
           </div>
         </div>
-        <div style={{display:"flex",flexDirection:"column",gap:14}}>
-          <div><label style={lbl}>Supabase URL</label><input value={sbf.url} onChange={e=>setSbf(f=>({...f,url:e.target.value}))} placeholder="https://xxxxxxxxxx.supabase.co" style={inp}/></div>
-          <div><label style={lbl}>Anon Key</label><input type="password" value={sbf.key} onChange={e=>setSbf(f=>({...f,key:e.target.value}))} placeholder="eyJhbGci..." style={inp}/></div>
-        </div>
-        <button onClick={handleConn} disabled={testing||!sbf.url||!sbf.key}
-          style={{marginTop:18,background:T.blue,border:"none",borderRadius:9,padding:"10px 26px",color:"#fff",fontSize:13,fontWeight:700,display:"flex",alignItems:"center",gap:7,opacity:(!sbf.url||!sbf.key)?.5:1,cursor:"pointer",boxShadow:`0 4px 14px ${T.blue}35`}}>
-          {testing?<><Loader2 size={14} style={{animation:"spin 1s linear infinite"}}/> Connecting...</>:false?<><Check size={14}/> Reconnect</>:<><Wifi size={14}/> Connect</>}
-        </button>
-        <div style={{marginTop:20,padding:16,background:T.bg,borderRadius:10,border:`1px solid ${T.borderLight}`}}>
-          <div style={{fontSize:12,fontWeight:700,color:T.textSec,marginBottom:10,display:"flex",alignItems:"center",gap:6}}><BookOpen size={12}/> SQL Setup</div>
-          <pre style={{fontSize:11,color:T.textMuted,fontFamily:"JetBrains Mono,monospace",lineHeight:1.8,overflow:"auto",whiteSpace:"pre-wrap"}}>{`CREATE TABLE app_data (\n  key TEXT PRIMARY KEY,\n  value JSONB NOT NULL,\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\n\nALTER TABLE app_data ENABLE ROW LEVEL SECURITY;\nCREATE POLICY "Allow all" ON app_data FOR ALL USING (true);`}</pre>
+        <div style={{marginTop:12,padding:"10px 14px",background:T.mintBg,borderRadius:9,fontSize:13,color:T.mint,fontWeight:600}}>
+          ✅ Firestoreに自動同期中 — どの端末でも同じデータが使えます
         </div>
       </div>
     </div>
