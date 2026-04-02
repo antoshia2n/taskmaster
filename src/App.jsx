@@ -1413,7 +1413,19 @@ function TGroup({group,tasks,projects,isDragOver,isGroupDragOver,
   onTaskDS,onTaskDO,onTaskDrop,onGroupDS,onGroupDO,onGroupDrop,
   dragOverTaskId,setDragOverTaskId,
   onToggle,onEdit,onDel,onArc,onPom,onMoveToday,onSnooze,onToggleSub,onDelG,onEditG,ntg,setNtg,ntt,setNtt,addQ}){
-  const [coll,setColl]=useState(false);
+  // 折りたたみ状態を localStorage で永続化
+  const collKey = group.id ? "tm_grp_coll_"+group.id : null;
+  const [coll,setCollRaw]=useState(()=>{
+    if(!collKey) return false;
+    try{ return localStorage.getItem(collKey)==="1"; }catch(e){ return false; }
+  });
+  const setColl = (fn) => {
+    setCollRaw(prev=>{
+      const next = typeof fn==="function" ? fn(prev) : fn;
+      if(collKey){ try{ localStorage.setItem(collKey, next?"1":"0"); }catch(e){} }
+      return next;
+    });
+  };
   const done=tasks.filter(t=>t.completed).length;
   const addComposing=useRef(false);
 
