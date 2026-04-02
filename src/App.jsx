@@ -239,6 +239,7 @@ let STATUS = getSTATUS();
 const REPEAT_OPTS=[
   {v:"",l:"なし"},{v:"daily",l:"毎日"},{v:"weekday",l:"平日"},{v:"weekly",l:"毎週"},{v:"monthly",l:"毎月"},
 ];
+const SAKI_GROUP_ID = "saki_grp"; // 先延ばしグループの固定ID
 const GROUP_COLORS=[T.blue,T.lav,T.mint,T.amber,T.peach,"#2D4A8A","#B8A9D4","#A8D4B8","#F4A261","#8ECAE6"];
 
 // ── Default Data ──────────────────────────────────────────────────────────────
@@ -545,6 +546,11 @@ function AppInner() {
           if (!fsData.project_groups)_fsSave("project_groups", pg);
         } catch(e) { console.error("Firestore load failed:", e); }
       }
+      // 先延ばしグループが存在しない場合は自動作成
+      setGroupsR(gs => {
+        if(gs.find(g=>g.id===SAKI_GROUP_ID)) return gs;
+        return [...gs,{id:SAKI_GROUP_ID,title:"先延ばし",color:"#9B8EC8",order:9999}];
+      });
       setReady(true);
       // 通知権限をリクエスト（まだ決定していない場合のみ）
       if("Notification" in window && Notification.permission==="default"){
@@ -740,9 +746,10 @@ function AppInner() {
 
   const filteredTasks=useMemo(()=>{
     const a=tasks.filter(t=>!t.archived);
-    if(view==="today")   return a.filter(t=>!t.completed&&t.deadline&&t.deadline<=today());
-    if(view==="tomorrow")return a.filter(t=>t.deadline===tomorrow());
-    if(view==="week")    return a.filter(t=>!t.completed&&t.deadline>=today()&&t.deadline<=weekEnd());
+    if(view==="today")   return a.filter(t=>!t.completed&&t.deadline&&t.deadline<=today()&&t.groupId!==SAKI_GROUP_ID);
+    if(view==="tomorrow")return a.filter(t=>t.deadline===tomorrow()&&t.groupId!==SAKI_GROUP_ID);
+    if(view==="week")    return a.filter(t=>!t.completed&&t.deadline>=today()&&t.deadline<=weekEnd()&&t.groupId!==SAKI_GROUP_ID);
+    if(view==="saki")   return a.filter(t=>t.groupId===SAKI_GROUP_ID);
     return a; // "all" — include completed, TaskView filters by showDone
   },[tasks,view]);
 
@@ -957,11 +964,13 @@ function AppInner() {
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 function Sidebar({view,setView,tasks}){
-  const td=tasks.filter(t=>!t.completed&&t.deadline===today()).length;
+  const td=tasks.filter(t=>!t.completed&&t.deadline===today()&&t.groupId!==SAKI_GROUP_ID).length;
   const ip=tasks.filter(t=>t.status==="inprogress").length;
+  const sakiCount=tasks.filter(t=>!t.completed&&!t.archived&&t.groupId===SAKI_GROUP_ID).length;
   const nav=[
     [{id:"today",icon:<Zap size={16}/>,label:"Today",badge:td},{id:"tomorrow",icon:<Sunrise size={16}/>,label:"Tomorrow"},{id:"week",icon:<Calendar size={16}/>,label:"This Week"},{id:"all",icon:<Inbox size={16}/>,label:"All Tasks",badge:ip}],
     [{id:"projects",icon:<Folder size={16}/>,label:"Projects"},{id:"gantt",icon:<BarChart3 size={16}/>,label:"Gantt Chart"}],
+    [{id:"saki",icon:<Clock size={16}/>,label:"先延ばし",badge:sakiCount}],
     [{id:"archive",icon:<Archive size={16}/>,label:"Archive"},{id:"manual",icon:<BookOpen size={16}/>,label:"Manual"},{id:"settings",icon:<Settings size={16}/>,label:"Settings"}],
   ];
   const isActive=(id)=>view===id||(id==="projects"&&view==="project_detail");
