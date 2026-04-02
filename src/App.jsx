@@ -833,7 +833,7 @@ function AppInner() {
         {/* Scale wrapper */}
         <div style={{flex:1,overflow:"auto",transformOrigin:"top left",zoom:scale}}>
           <div className="main-pad" style={{padding:"28px 32px",minHeight:"100%"}}>
-            {(["today","tomorrow","week","all"].includes(view))&&(
+            {(["today","tomorrow","week","all","saki"].includes(view))&&(
               <TaskView view={view} tasks={filteredTasks} allTasks={tasks.filter(t=>!t.archived)}
                 groups={groups} projects={projects}
                 setTasks={setTasks} setGroups={setGroups}
@@ -966,11 +966,10 @@ function AppInner() {
 function Sidebar({view,setView,tasks}){
   const td=tasks.filter(t=>!t.completed&&t.deadline===today()&&t.groupId!==SAKI_GROUP_ID).length;
   const ip=tasks.filter(t=>t.status==="inprogress").length;
-  const sakiCount=tasks.filter(t=>!t.completed&&!t.archived&&t.groupId===SAKI_GROUP_ID).length;
   const nav=[
     [{id:"today",icon:<Zap size={16}/>,label:"Today",badge:td},{id:"tomorrow",icon:<Sunrise size={16}/>,label:"Tomorrow"},{id:"week",icon:<Calendar size={16}/>,label:"This Week"},{id:"all",icon:<Inbox size={16}/>,label:"All Tasks",badge:ip}],
     [{id:"projects",icon:<Folder size={16}/>,label:"Projects"},{id:"gantt",icon:<BarChart3 size={16}/>,label:"Gantt Chart"}],
-    [{id:"saki",icon:<Clock size={16}/>,label:"先延ばし",badge:sakiCount}],
+    [{id:"saki",icon:<Clock size={16}/>,label:"先延ばし"}],
     [{id:"archive",icon:<Archive size={16}/>,label:"Archive"},{id:"manual",icon:<BookOpen size={16}/>,label:"Manual"},{id:"settings",icon:<Settings size={16}/>,label:"Settings"}],
   ];
   const isActive=(id)=>view===id||(id==="projects"&&view==="project_detail");
@@ -1149,7 +1148,7 @@ function TaskView({view,tasks,allTasks,groups,projects,setTasks,setGroups,onEdit
     byG:groups.reduce((a,g)=>{a[g.id]=visibleTasks.filter(t=>t.groupId===g.id).sort((a,b)=>a.order-b.order);return a;},{}),
     ung:visibleTasks.filter(t=>!groups.find(g=>g.id===t.groupId)).sort((a,b)=>a.order-b.order),
   }),[groups,visibleTasks]);
-  const vl={today:"Today",tomorrow:"Tomorrow",week:"This Week",all:"All Tasks",manual:"マニュアル"};
+  const vl={today:"Today",tomorrow:"Tomorrow",week:"This Week",all:"All Tasks",saki:"先延ばし",manual:"マニュアル"};
 
   const addQ=(gid)=>{
     if(!ntt.trim())return;
